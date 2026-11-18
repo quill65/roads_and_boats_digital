@@ -1,0 +1,52 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    color: #1e293b;
+    background-color: #0f172a;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  h1, h2, h3, .font-serif-title {
+    font-family: 'Cinzel', serif;
+  }
+
+  .font-mono-numbers {
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .lobby-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: #475569 #020617;
+    scrollbar-gutter: stable;
+  }
+  .lobby-scrollbar::-webkit-scrollbar {
+    width: 10px;
+  }
+  .lobby-scrollbar::-webkit-scrollbar-track {
+    background: #020617;
+    border-left: 1px solid #1e293b;
+  }
+  .lobby-scrollbar::-webkit-scrollbar-thumb {
+    background: #475569;
+    border-radius: 9999px;
+    border: 2px solid #020617;
+  }
+  .lobby-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #f59e0b;
+  }
+}

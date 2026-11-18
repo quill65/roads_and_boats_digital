@@ -1,0 +1,6 @@
+{
+  "name": "Roads & Boats - Digital Edition",
+  "description": "The definitive digital adaptation of Splotter Spellen's classic logistics board game Roads & Boats, featuring real-time multiplayer, turn-based validation, interactive hex map, and tutorial.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
