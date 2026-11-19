@@ -1090,20 +1090,20 @@ function runMovementPhase(state: GameState, bot: Player): void {
       reservedBuildJobs >= 2;
 
     if (!targetSet && bridgeTarget && (!coreBuildTarget || (!carryingBuildMat && reservedBuildJobs === 0))) {
-      if ((t.cargo.boards || 0) >= 2) {
+      if ((t.cargo.stone || 0) >= 1) {
         setTarget(new Set([bridgeTarget.anchorHexId]), { [bridgeTarget.anchorHexId]: bridgeTarget.anchorSide });
       } else if (getFreeCapacity(t) > 0) {
-        const src = findBestPickupSourceForGoods(state, bot, t, ['boards'], undefined, bridgeTarget.anchorHexId);
+        const src = findBestPickupSourceForGoods(state, bot, t, ['stone'], undefined, bridgeTarget.anchorHexId);
         if (src && (!localPickupOnly || src.distance === 0)) {
           if (src.distance === 0) {
-            botPickupGoods(state, bot, t, 'boards', 1);
+            botPickupGoods(state, bot, t, 'stone', 1);
             setTarget(new Set([bridgeTarget.anchorHexId]), { [bridgeTarget.anchorHexId]: bridgeTarget.anchorSide });
           } else {
             setTarget(new Set([src.hexId]), { [src.hexId]: src.side });
             plannedPickup = {
               hexId: src.hexId,
               side: src.side,
-              good: 'boards',
+              good: 'stone',
               destHexId: bridgeTarget.anchorHexId,
               destSide: bridgeTarget.anchorSide,
             };
@@ -1707,26 +1707,31 @@ function runBuildingPhase(state: GameState, bot: Player): void {
     const builder = transporters.find(
       t =>
         (t.hexId === bridgeNeeded!.hexA || t.hexId === bridgeNeeded!.hexB) &&
-        canBuildRoad(state, bot.id, bridgeNeeded!.hexA, bridgeNeeded!.hexB, 'boards', t.id).valid
+        canBuildRoad(state, bot.id, bridgeNeeded!.hexA, bridgeNeeded!.hexB, 'stone', t.id, {
+          buildType: 'bridge',
+        }).valid
     );
     if (builder) {
-      botBuildRoad(state, bot, bridgeNeeded.hexA, bridgeNeeded.hexB, 'boards', builder.id);
+      botBuildRoad(state, bot, bridgeNeeded.hexA, bridgeNeeded.hexB, 'stone', builder.id, {
+        buildType: 'bridge',
+      });
     }
   }
 
-  // 4. Pave connecting roads between bot hubs using surplus ground Stone (never steal Stone in cargo or active build reserve)
+  // 4. Pave connecting roads between bot hubs using surplus ground Stone (never steal Stone in cargo or active build/bridge reserve)
   const quarryCount = getOwnedBuildingsOfType(state, bot.id, 'quarry').length;
   const stockExchangeDone = getOwnedBuildingsOfType(state, bot.id, 'stockexchange').length > 0;
   if (quarryCount > 0 || stockExchangeDone) {
     const coreSeqNow = getCoreBuildSequence(state, bot.id);
     const nextCore = findNextBuildTargetFromSequence(state, bot, reachableStates, coreSeqNow);
-    const activeStoneReserve = nextCore
-      ? Math.max(
-          0,
-          (BUILDING_SPECS[nextCore.buildingType].cost.stone || 0) -
-            getBotGroundGood(state, bot, nextCore.hexId, 'stone', nextCore.side)
-        )
-      : 0;
+    const activeStoneReserve =
+      (nextCore
+        ? Math.max(
+            0,
+            (BUILDING_SPECS[nextCore.buildingType].cost.stone || 0) -
+              getBotGroundGood(state, bot, nextCore.hexId, 'stone', nextCore.side)
+          )
+        : 0) + (bridgeNeeded ? 1 : 0);
 
     const botHubs = new Set<string>([
       bot.homeHexId,

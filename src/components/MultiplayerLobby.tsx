@@ -7,6 +7,7 @@ import { MAP_PRESETS, ScenarioMapSetId } from '../game/maps';
 import { SCENARIO_MAP_SETS } from '../game/scenarios';
 import { BOT_PROFILES, DEFAULT_BOT_PROFILE_ID, isElevatedPrivilegedPlayer } from '../game/engine';
 import { getSavedPlayerId } from '../utils/clientIdentity';
+import { LearningRefsMenu } from './LearningRefsMenu';
 
 interface LobbyGameSummary {
   id: string;
@@ -18,6 +19,7 @@ interface LobbyGameSummary {
   playerCount: number;
   activePlayerCount?: number;
   isSolitaire?: boolean;
+  bookmarkCount?: number;
   scenarioId?: string;
   creatorClientId?: string;
   creatorPlayerId?: string;
@@ -42,7 +44,8 @@ interface MultiplayerLobbyProps {
     mapName: string,
     hostName: string,
     fillWithBots: boolean,
-    botProfileId?: string
+    botProfileId?: string,
+    maxRounds?: number
   ) => void;
   onDeleteGame: (gameId: string) => Promise<boolean> | void;
   onRenameGame?: (gameId: string, newName: string) => Promise<boolean | void> | void;
@@ -76,13 +79,15 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
     return localStorage.getItem('rb_player_name') || 'Merchant Prince';
   });
 
-  // Modal / Form state for Creating Game
+  // Modal / Form state for Creating Game & About Dialog
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showAboutModal, setShowAboutModal] = useState(false);
   const [newGameName, setNewGameName] = useState('Realm of Iron & Timber');
   const [selectedMap, setSelectedMap] = useState('river_valley');
   const [createMapSetFilter, setCreateMapSetFilter] = useState<'all' | ScenarioMapSetId>('all');
   const [fillBots, setFillBots] = useState(true);
   const [selectedBotProfileId, setSelectedBotProfileId] = useState<string>(DEFAULT_BOT_PROFILE_ID);
+  const [customMaxRounds, setCustomMaxRounds] = useState<string>('default');
   const [roomCodeInput, setRoomCodeInput] = useState('');
 
   const fetchGames = async () => {
@@ -106,6 +111,15 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    if (!showAboutModal) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowAboutModal(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showAboutModal]);
+
   const handleNameChange = (val: string) => {
     setPlayerName(val);
     localStorage.setItem('rb_player_name', val);
@@ -115,12 +129,14 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
 
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const parsedMaxRounds = customMaxRounds === 'default' ? undefined : Number(customMaxRounds);
     onCreateGame(
       newGameName,
       selectedMap,
       playerName,
       isSelectedMapSolo ? false : fillBots,
-      isSelectedMapSolo || !fillBots ? undefined : selectedBotProfileId
+      isSelectedMapSolo || !fillBots ? undefined : selectedBotProfileId,
+      parsedMaxRounds && !Number.isNaN(parsedMaxRounds) ? parsedMaxRounds : undefined
     );
     setShowCreateModal(false);
   };
@@ -184,9 +200,20 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
       {/* Top Bar following Top Bar Contract */}
       <header className="flex flex-wrap items-center justify-between gap-3 sm:gap-4 px-3 sm:px-6 lg:px-8 py-3 sm:py-4 border-b border-slate-800 bg-slate-950/85 backdrop-blur sticky top-0 z-30">
         <div className="flex items-center justify-between gap-3 w-full sm:w-auto">
-          <a href="/" className="text-lg sm:text-xl font-bold font-serif-title tracking-tight text-amber-200 whitespace-nowrap shrink-0">
-            Roads & Boats
-          </a>
+          <div className="flex items-center gap-2 shrink-0">
+            <a href="/" className="text-lg sm:text-xl font-bold font-serif-title tracking-tight text-amber-200 whitespace-nowrap shrink-0">
+              Roads &amp; Boats
+            </a>
+            <button
+              type="button"
+              onClick={() => setShowAboutModal(true)}
+              className="px-2.5 py-1 rounded-lg text-[11px] sm:text-xs font-semibold text-slate-300 hover:text-amber-200 bg-slate-900 border border-slate-700/80 hover:border-amber-500/60 hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1"
+              title="About Roads & Boats and features of this digital adaptation"
+            >
+              <span>ℹ️</span>
+              <span>About</span>
+            </button>
+          </div>
 
           <div className="flex items-center gap-2 text-xs font-medium text-slate-400 min-w-0">
             <span className="hidden md:inline shrink-0">Player Name:</span>
@@ -215,37 +242,18 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
             <button
               onClick={onOpenSolitaire}
               className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 text-[11px] sm:text-xs font-bold text-amber-300 hover:text-white bg-amber-950/60 border border-amber-600/70 hover:bg-amber-900 rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 shadow"
-              title="Official Roads & Boats Pre-Made Scenarios (1-Player Solo, Splotter Scenario Book & 1–2P Maps)"
+              title="Official Roads & Boats Scenarios (1-Player Solo, Splotter Scenario Book & 1–2P Maps)"
             >
               <span>🗺️</span>
-              <span>Pre-Made Scenarios</span>
+              <span>Scenarios</span>
             </button>
           )}
-          <button
-            onClick={onOpenPlayerAid}
-            className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 text-[11px] sm:text-xs font-semibold text-amber-300 hover:text-white bg-slate-900 border border-amber-600/60 hover:bg-slate-800 rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5"
-            title="Open Buildings & Vehicles Player Aid Reference Card"
-          >
-            <span>📋</span>
-            <span>Player Aid</span>
-          </button>
-          <button
-            onClick={onStartTutorial}
-            className="px-2.5 sm:px-4 py-1.5 sm:py-2 text-[11px] sm:text-xs font-semibold text-amber-300 hover:text-white bg-amber-950/60 border border-amber-800/60 hover:bg-amber-900 rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5"
-          >
-            <span>🎓</span>
-            <span>Tutorial</span>
-          </button>
-          {onOpenGameRules && (
-            <button
-              onClick={onOpenGameRules}
-              className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 text-[11px] sm:text-xs font-bold text-slate-200 hover:text-white bg-slate-900 border border-slate-700 hover:bg-slate-800 rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 shadow"
-              title="Open Roads & Boats Game Rules & Rulebook"
-            >
-              <span>📖</span>
-              <span>Game Rules</span>
-            </button>
-          )}
+          <LearningRefsMenu
+            variant="lobby"
+            onOpenPlayerAid={onOpenPlayerAid}
+            onOpenTutorial={onStartTutorial}
+            onOpenGameRules={onOpenGameRules}
+          />
           <button
             onClick={() => setShowCreateModal(true)}
             className="px-3 sm:px-4 py-1.5 sm:py-2 text-[11px] sm:text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors whitespace-nowrap shrink-0 shadow sm:ml-auto xl:ml-0"
@@ -255,32 +263,8 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
         </div>
       </header>
 
-      {/* Compact Title Section (No Background Image) */}
-      <div className="relative border-b border-slate-800 bg-slate-900">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-3.5 sm:py-4 flex flex-col items-center text-center">
-          <p className="text-[11px] uppercase tracking-widest text-amber-400 font-bold mb-1">
-            The Digital Adaptation of Splotter Spellen's Masterpiece
-          </p>
-          <h1 className="text-xl sm:text-2xl md:text-3xl font-extrabold font-serif-title text-white max-w-3xl leading-tight">
-            Transport, Logistics & The Great Wonder
-          </h1>
-          <p className="mt-1.5 text-xs sm:text-sm text-slate-300 max-w-2xl leading-snug">
-            Command pack donkeys, wagons, and river barges across a vibrant hexagonal landscape. Harvest timber, quarry stone, erect factories, and race to construct the Wonder of the World.
-          </p>
-
-          <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="px-4 py-2 text-xs sm:text-sm font-semibold text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl transition-colors"
-            >
-              🌐 Host Multiplayer Lobby
-            </button>
-          </div>
-        </div>
-      </div>
-
       {/* Main Content: Matchmaking & Room Browser */}
-      <main className="max-w-5xl mx-auto px-3 sm:px-6 py-6 sm:py-10 w-full flex-1 flex flex-col gap-6 sm:gap-8">
+      <main className="max-w-5xl mx-auto px-3 sm:px-6 py-5 sm:py-8 w-full flex-1 flex flex-col gap-5 sm:gap-7">
         {/* Join by Direct Code Bar */}
         <div className="p-3.5 sm:p-4 bg-slate-900 border border-slate-800 rounded-xl flex flex-wrap items-center justify-between gap-3 sm:gap-4">
           <div className="flex items-center gap-3 min-w-0">
@@ -329,13 +313,23 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
               </div>
               <p className="text-xs text-slate-400">Join an ongoing match or observe online sessions (10 visible rows · scrollable)</p>
             </div>
-            <button
-              onClick={fetchGames}
-              disabled={isLoading}
-              className="px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-900 border border-slate-800 rounded-lg transition-colors shrink-0"
-            >
-              {isLoading ? 'Refreshing...' : '🔄 Refresh'}
-            </button>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(true)}
+                className="px-3.5 py-1.5 text-xs font-bold text-white bg-slate-800 hover:bg-slate-700 border border-amber-500/50 hover:border-amber-400 rounded-lg transition-colors whitespace-nowrap shadow-sm"
+              >
+                🌐 Host Multiplayer Lobby
+              </button>
+              <button
+                type="button"
+                onClick={fetchGames}
+                disabled={isLoading}
+                className="px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-900 border border-slate-800 rounded-lg transition-colors shrink-0"
+              >
+                {isLoading ? 'Refreshing...' : '🔄 Refresh'}
+              </button>
+            </div>
           </div>
 
           {gamesList.length === 0 ? (
@@ -475,6 +469,14 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
                             {isSolo && (
                               <span className="text-[9px] font-mono font-semibold text-amber-300 bg-amber-950/70 border border-amber-700/50 px-1.5 py-0.2 rounded shrink-0">
                                 1P Solo
+                              </span>
+                            )}
+                            {isSolo && (g.bookmarkCount || 0) > 0 && (
+                              <span
+                                className="text-[9px] font-mono font-semibold text-amber-200 bg-slate-950/90 border border-amber-600/50 px-1.5 py-0.2 rounded shrink-0"
+                                title={`${g.bookmarkCount} saved solo bookmark${g.bookmarkCount === 1 ? '' : 's'}`}
+                              >
+                                🔖 {g.bookmarkCount}
                               </span>
                             )}
                           </>
@@ -783,6 +785,25 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
                     Pre-Made Solo map selected: strictly 1 human player only (zero bots, no additional players can join).
                   </p>
                 )}
+
+                <div className="flex items-center justify-between gap-3 pt-1">
+                  <label htmlFor="customMaxRounds" className="text-xs font-semibold text-slate-300">
+                    Round Limit
+                  </label>
+                  <select
+                    id="customMaxRounds"
+                    value={customMaxRounds}
+                    onChange={e => setCustomMaxRounds(e.target.value)}
+                    className="px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs font-semibold text-slate-100 focus:outline-none focus:border-amber-400"
+                  >
+                    <option value="default">Default ({isSelectedMapSolo ? '20 Rounds' : '33 Rounds'})</option>
+                    <option value="10">10 Rounds (Sprint)</option>
+                    <option value="15">15 Rounds</option>
+                    <option value="20">20 Rounds</option>
+                    <option value="24">24 Rounds</option>
+                    <option value="33">33 Rounds (Standard)</option>
+                  </select>
+                </div>
               </div>
 
               <div className="pt-4 border-t border-slate-800 flex justify-end gap-3">
@@ -801,6 +822,169 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* About Roads & Boats Modal */}
+      {showAboutModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-sm"
+          onClick={() => setShowAboutModal(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="about-rb-title"
+            onClick={e => e.stopPropagation()}
+            className="w-full max-w-2xl bg-slate-900 border border-amber-500/40 rounded-2xl shadow-2xl overflow-hidden max-h-[90dvh] flex flex-col"
+          >
+            {/* Header */}
+            <div className="px-5 sm:px-6 py-4 bg-gradient-to-r from-slate-950 via-amber-950/40 to-slate-950 border-b border-slate-800 flex items-start justify-between gap-3 shrink-0">
+              <div>
+                <p className="text-[10px] sm:text-[11px] uppercase tracking-widest text-amber-400 font-bold">
+                  The Digital Adaptation of Splotter Spellen&apos;s Masterpiece
+                </p>
+                <h2
+                  id="about-rb-title"
+                  className="text-xl sm:text-2xl font-extrabold font-serif-title text-white mt-0.5"
+                >
+                  Roads &amp; Boats
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAboutModal(false)}
+                aria-label="Close About dialog"
+                className="w-8 h-8 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 flex items-center justify-center text-sm shrink-0"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 sm:p-6 overflow-y-auto space-y-5 text-xs sm:text-sm text-slate-300 leading-relaxed">
+              {/* Overview */}
+              <section className="space-y-2">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-amber-300">
+                  About the Game
+                </h3>
+                <p>
+                  <strong className="text-white">Roads &amp; Boats</strong> is a celebrated economic logistics board game designed by Jeroen Doumen and Joris Wiersinga (Splotter Spellen). Starting with just a few pack donkeys, boards, stone, and two geese, you build a sprawling supply chain across a hexagonal landscape of forests, pastures, quarries, mountains, rivers, and seas.
+                </p>
+                <p>
+                  Its signature twist sets it apart from almost every other strategy game:{' '}
+                  <strong className="text-amber-200">
+                    you never own land, raw goods, or factories—you only own your transporters.
+                  </strong>{' '}
+                  Any loose goods left on the ground or outputs sitting at a workshop can be picked up by whoever reaches them first. Victory comes from planning efficient transport networks, refining raw resources into high-value wealth (Gold, Coins, and Stock Certificates), and racing to contribute bricks to the{' '}
+                  <strong className="text-white">Wonder of the World</strong>.
+                </p>
+              </section>
+
+              {/* 4-Phase Turn Loop */}
+              <section className="space-y-2">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-amber-300">
+                  How Each Round Plays
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800">
+                    <p className="font-bold text-white">1. Production Phase</p>
+                    <p className="text-slate-400 mt-0.5 leading-snug">
+                      Primary buildings harvest timber, clay, stone, and ore; factories refine boards, fuel, paper, coins, and stock; donkeys and geese breed in privacy; and 2 Geese + 1 Paper unlock new technologies.
+                    </p>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800">
+                    <p className="font-bold text-white">2. Movement Phase</p>
+                    <p className="text-slate-400 mt-0.5 leading-snug">
+                      Load and unload cargo on donkeys, wagons, steam trucks, rafts, rowboats, and steamers, then haul goods across roads, bridges, rivers, and coastal waters.
+                    </p>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800">
+                    <p className="font-bold text-white">3. Building Phase</p>
+                    <p className="text-slate-400 mt-0.5 leading-snug">
+                      Construct primary producers, refining workshops, and vehicle factories, or spend 1 Stone to pave land roads, riverbank roads, and river bridges.
+                    </p>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800">
+                    <p className="font-bold text-white">4. Wonder Phase</p>
+                    <p className="text-slate-400 mt-0.5 leading-snug">
+                      Contribute goods at your home tile to claim stepped pyramid bricks for Victory Points—and advance the shared game timer toward final scoring.
+                    </p>
+                  </div>
+                </div>
+              </section>
+
+              {/* Digital Adaptation Features */}
+              <section className="space-y-2">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-amber-300">
+                  Features of This Digital Adaptation
+                </h3>
+                <ul className="space-y-1.5 text-xs text-slate-300">
+                  <li className="flex items-start gap-2">
+                    <span className="shrink-0">⚖️</span>
+                    <span>
+                      <strong className="text-white">Authentic 3rd Edition Rules Engine:</strong>{' '}
+                      Enforces river-divided tile banks, bridges, road speeds, mine ore bags, donkey/goose privacy breeding, Production Phase research with selective factory upgrades, and Wonder scoring.
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="shrink-0">🗺️</span>
+                    <span>
+                      <strong className="text-white">33 Scenarios, Solo Puzzles &amp; Online Multiplayer:</strong>{' '}
+                      Play 1-player solitaire optimization puzzles, official Splotter Scenario Book maps, or live 2–4 player online matches with shareable 8-digit game codes, AI bots, and read-only Observer mode.
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="shrink-0">⏳</span>
+                    <span>
+                      <strong className="text-white">Undo/Redo, Move Memory &amp; Solo Bookmarks:</strong>{' '}
+                      Step backward through move history anytime, or save named checkpoints in solo games to branch strategies and return to the exact board state even after finishing a run.
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="shrink-0">📝</span>
+                    <span>
+                      <strong className="text-white">Private Map Notes &amp; Built-In Learning Tools:</strong>{' '}
+                      Pin color-coded planning notes anywhere on the map (strictly hidden from other players), manage unit cargo inline, and access the interactive Tutorial, Player Aid, and Rulebook anytime under <em>Learning &amp; Refs</em>.
+                    </span>
+                  </li>
+                </ul>
+              </section>
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 sm:px-6 py-3.5 bg-slate-950 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAboutModal(false);
+                    onStartTutorial();
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 transition-colors"
+                >
+                  🎓 Start Tutorial
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAboutModal(false);
+                    onOpenPlayerAid();
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-amber-200 hover:text-white bg-slate-900 border border-amber-600/60 hover:bg-slate-800 transition-colors"
+                >
+                  📋 Player Aid
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAboutModal(false)}
+                className="px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 transition-colors"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

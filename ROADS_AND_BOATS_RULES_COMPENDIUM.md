@@ -134,7 +134,7 @@ Research items may be researched in any order:
 ## 7. RIVERS, BRIDGES & WATER RULES
 1. **Rivers Cut Across Tiles:** In the original game, rivers are pre-printed on tiles and physically divide land.
 2. **Land Movement Across Rivers:** Land transporters (Donkey, Wagon, Truck) CANNOT cross an unbridged river under any circumstances. A **Bridge** must be built across the river.
-3. **Bridge Construction:** Paving across a river border constructs a Bridge and costs **2 Boards** (instead of 1 Board/Stone for an ordinary overland road).
+3. **Bridge Construction:** Paving across a river border constructs a Bridge and costs **1 Stone** (same as a paved land road; Boards cannot build bridges).
 4. **Water Transporters:**
    - Rafts, Rowboats, and Steamers can only navigate along river waterways and across open water tiles.
    - Watercraft CANNOT move overland between two dry land tiles if there is no river.

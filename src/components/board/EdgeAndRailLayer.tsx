@@ -163,7 +163,7 @@ export const EdgeAndRailLayer: React.FC<EdgeAndRailLayerProps> = ({
                   activePlayerId,
                   edge.hexA,
                   edge.hexB,
-                  'boards',
+                  'stone',
                   builder.id,
                   { buildType: 'bridge' }
                 ),
@@ -346,7 +346,7 @@ export const EdgeAndRailLayer: React.FC<EdgeAndRailLayerProps> = ({
               );
             })()}
 
-            {/* River Bridge Target (2 Boards, short perpendicular span across the water) */}
+            {/* River Bridge Target (1 Stone, short perpendicular span across the water) */}
             {riverBridgeTarget && bridgeGeom && (() => {
               const hasMaterials = Boolean(riverBridgeTarget.check.valid);
               const { start, end, midPoint } = bridgeGeom;
@@ -358,14 +358,14 @@ export const EdgeAndRailLayer: React.FC<EdgeAndRailLayerProps> = ({
                   onClick={e => {
                     e.stopPropagation();
                     onSelectEdgeForRoad?.(edge.hexA, edge.hexB, {
-                      material: 'boards',
+                      material: 'stone',
                       buildType: 'bridge',
                     });
                   }}
                 >
                   <title>
                     {hasMaterials
-                      ? 'Click to build Bridge across water (2 Boards)'
+                      ? 'Click to build Bridge across water (1 Stone)'
                       : riverBridgeTarget.check.reason || 'Insufficient materials on this side'}
                   </title>
                   <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke="transparent" strokeWidth="18" strokeLinecap="round" pointerEvents="stroke" />

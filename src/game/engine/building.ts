@@ -209,19 +209,14 @@ export function canBuildRoad(
     return { valid: false, reason: 'River Bridges can only be built across river borders' };
   }
 
-  const isBridge =
-    options?.buildType === 'bridge'
-      ? true
-      : options?.buildType === 'road'
-      ? false
-      : edge.isRiver && material === 'boards';
+  const isBridge = options?.buildType === 'bridge';
 
   const cost = isBridge ? INFRASTRUCTURE_RULES.bridge.materialCost : INFRASTRUCTURE_RULES.road.materialCost;
 
   if (isBridge && !(INFRASTRUCTURE_RULES.bridge.allowedMaterials as ReadonlyArray<string>).includes(material)) {
     return {
       valid: false,
-      reason: 'River Bridges require strictly 2 Boards (Stone cannot build bridges)',
+      reason: 'River Bridges require strictly 1 Stone (Boards cannot build bridges)',
       isBridge,
       cost,
     };

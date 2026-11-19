@@ -975,7 +975,7 @@ export function getWatercraftVisualOffset(
     return { dx: baseDx, dy: baseDy };
   }
   const spreadAngle = (indexInGroup / totalInGroup) * Math.PI * 2;
-  const spreadR = 13;
+  const spreadR = totalInGroup === 2 ? 15 : totalInGroup === 3 ? 18 : 21;
   return {
     dx: baseDx + Math.cos(spreadAngle) * spreadR,
     dy: baseDy + Math.sin(spreadAngle) * spreadR,

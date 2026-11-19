@@ -21,6 +21,8 @@ import {
   canReplenishMine,
   canResearchTech,
   createInitialGame,
+  createSoloBookmark,
+  deleteSoloBookmark,
   executeBuildFactory,
   executeBuildRoad,
   executeBuildWonder,
@@ -39,12 +41,22 @@ import {
   isSoloGameState,
   reconnectSoloPlayer,
   redoMove,
+  renameSoloBookmark,
   resignPlayer,
+  restoreSoloBookmark,
   revertToHistoryIndex,
   runBotTurn,
   sanitizeUniquePlayers,
   undoMove,
 } from './src/game/engine';
+import {
+  createPlayerMapNote,
+  deleteAllMapNotesForGame,
+  deletePlayerMapNote,
+  listPlayerMapNotes,
+  MapNotesDatabase,
+  updatePlayerMapNote,
+} from './src/game/mapNotes';
 import { GameAction, GameState } from './src/game/types';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -75,11 +87,14 @@ app.use(express.json({ limit: '10mb' }));
 
 // In-memory games storage + disk persistence
 const games: Map<string, GameState> = new Map();
+// Private per-player map notes storage (strictly separated from shared GameState / SSE)
+const mapNotesDb: MapNotesDatabase = {};
 // SSE listener connections per game: gameId -> Set of Response objects
 const sseClients: Map<string, Set<Response>> = new Map();
 
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'roads_and_boats_db.json');
+const MAP_NOTES_FILE = path.join(DATA_DIR, 'map_notes.json');
 const DRIVE_RULES_DIR = path.join(DATA_DIR, 'drive_imported_rules');
 const DRIVE_RULES_INDEX = path.join(DRIVE_RULES_DIR, '_index.json');
 
@@ -151,6 +166,32 @@ function persistGames() {
   }
 }
 
+function loadPersistedMapNotes() {
+  try {
+    ensureDataDir();
+    if (fs.existsSync(MAP_NOTES_FILE)) {
+      const raw = fs.readFileSync(MAP_NOTES_FILE, 'utf-8');
+      const parsed = JSON.parse(raw) as MapNotesDatabase;
+      Object.entries(parsed || {}).forEach(([gameId, byOwner]) => {
+        if (byOwner && typeof byOwner === 'object') {
+          mapNotesDb[gameId] = byOwner;
+        }
+      });
+    }
+  } catch (err) {
+    console.error('Failed to load persisted map notes:', err);
+  }
+}
+
+function persistMapNotes() {
+  try {
+    ensureDataDir();
+    fs.writeFileSync(MAP_NOTES_FILE, JSON.stringify(mapNotesDb, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Failed to persist map notes to disk:', err);
+  }
+}
+
 function broadcastGameState(gameId: string) {
   const game = games.get(gameId);
   if (!game) return;
@@ -171,6 +212,9 @@ function removeGameAndNotify(gameId: string, reason: string): boolean {
   const existed = games.delete(gameId);
   if (!existed) return false;
   persistGames();
+  if (deleteAllMapNotesForGame(mapNotesDb, gameId)) {
+    persistMapNotes();
+  }
   const clients = sseClients.get(gameId);
   if (clients && clients.size > 0) {
     const payload = `data: ${JSON.stringify({ deleted: true, gameId, reason })}\n\n`;
@@ -205,6 +249,7 @@ app.get('/api/games', (_req: Request, res: Response) => {
       playerCount: visiblePlayers.length,
       activePlayerCount: visiblePlayers.filter(p => !p.resigned).length,
       isSolitaire: isSolo,
+      bookmarkCount: isSolo ? g.bookmarks?.length || 0 : 0,
       scenarioId: g.scenarioId,
       creatorClientId: g.creatorClientId,
       creatorPlayerId: g.creatorPlayerId || starterPlayer?.id,
@@ -263,7 +308,7 @@ app.post('/api/games', (req: Request, res: Response) => {
 
   const trimmedName = typeof name === 'string' ? name.trim().slice(0, 40) : '';
   const newGame = createInitialGame(
-    trimmedName || (isSolo ? 'Pre-Made Scenario' : 'Valley of Wonders'),
+    trimmedName || (isSolo ? 'Solo Scenario' : 'Valley of Wonders'),
     mapName,
     playerConfigs,
     {
@@ -503,6 +548,30 @@ app.post('/api/games/:id/action', (req: Request, res: Response) => {
         if (!success) reason = 'Invalid history target index';
         break;
       }
+      case 'CREATE_BOOKMARK': {
+        const resBm = createSoloBookmark(game, { name: action.name, note: action.note });
+        success = resBm.success;
+        if (!success) reason = resBm.reason || 'Unable to save bookmark';
+        break;
+      }
+      case 'RESTORE_BOOKMARK': {
+        const resBm = restoreSoloBookmark(game, action.bookmarkId);
+        success = resBm.success;
+        if (!success) reason = resBm.reason || 'Unable to restore bookmark';
+        break;
+      }
+      case 'RENAME_BOOKMARK': {
+        const resBm = renameSoloBookmark(game, action.bookmarkId, action.name, action.note);
+        success = resBm.success;
+        if (!success) reason = resBm.reason || 'Unable to rename bookmark';
+        break;
+      }
+      case 'DELETE_BOOKMARK': {
+        const resBm = deleteSoloBookmark(game, action.bookmarkId);
+        success = resBm.success;
+        if (!success) reason = resBm.reason || 'Unable to delete bookmark';
+        break;
+      }
       case 'RESEARCH_TECH': {
         const pId = action.playerId || game.activePlayerId;
         const check = canResearchTech(game, pId, action.hexId, action.techId, action.transporterId);
@@ -694,6 +763,89 @@ app.get('/api/games/:id/stream', (req: Request, res: Response) => {
   });
 });
 
+// 9b. Private Per-Player Map Notes (Never broadcast via SSE or visible to other players)
+app.get('/api/games/:id/notes', (req: Request, res: Response) => {
+  const game = findGameByCode(req.params.id);
+  if (!game) return res.status(404).json({ error: 'Game not found' });
+
+  const playerId = typeof req.query.playerId === 'string' ? req.query.playerId : undefined;
+  const clientId = typeof req.query.clientId === 'string' ? req.query.clientId : undefined;
+  const result = listPlayerMapNotes(mapNotesDb, game, { playerId, clientId });
+  if (!result.success) {
+    return res.status(result.status).json({ error: result.error });
+  }
+  return res.json({ notes: result.notes });
+});
+
+app.post('/api/games/:id/notes', (req: Request, res: Response) => {
+  const game = findGameByCode(req.params.id);
+  if (!game) return res.status(404).json({ error: 'Game not found' });
+
+  const { playerId, clientId, x, y, text, color } = (req.body || {}) as {
+    playerId?: string;
+    clientId?: string;
+    x: number;
+    y: number;
+    text: string;
+    color?: string;
+  };
+  const result = createPlayerMapNote(
+    mapNotesDb,
+    game,
+    { playerId, clientId },
+    { x, y, text, color }
+  );
+  if (!result.success) {
+    return res.status(result.status).json({ error: result.error });
+  }
+  persistMapNotes();
+  return res.status(201).json({ success: true, note: result.note, notes: result.notes });
+});
+
+app.patch('/api/games/:id/notes/:noteId', (req: Request, res: Response) => {
+  const game = findGameByCode(req.params.id);
+  if (!game) return res.status(404).json({ error: 'Game not found' });
+
+  const { playerId, clientId, text, x, y, color } = (req.body || {}) as {
+    playerId?: string;
+    clientId?: string;
+    text?: string;
+    x?: number;
+    y?: number;
+    color?: string;
+  };
+  const result = updatePlayerMapNote(
+    mapNotesDb,
+    game,
+    { playerId, clientId },
+    req.params.noteId,
+    { text, x, y, color }
+  );
+  if (!result.success) {
+    return res.status(result.status).json({ error: result.error });
+  }
+  persistMapNotes();
+  return res.json({ success: true, note: result.note, notes: result.notes });
+});
+
+app.delete('/api/games/:id/notes/:noteId', (req: Request, res: Response) => {
+  const game = findGameByCode(req.params.id);
+  if (!game) return res.status(404).json({ error: 'Game not found' });
+
+  const body = (req.body || {}) as { playerId?: string; clientId?: string };
+  const playerId =
+    body.playerId || (typeof req.query.playerId === 'string' ? req.query.playerId : undefined);
+  const clientId =
+    body.clientId || (typeof req.query.clientId === 'string' ? req.query.clientId : undefined);
+
+  const result = deletePlayerMapNote(mapNotesDb, game, { playerId, clientId }, req.params.noteId);
+  if (!result.success) {
+    return res.status(result.status).json({ error: result.error });
+  }
+  persistMapNotes();
+  return res.json({ success: true, notes: result.notes });
+});
+
 // 10. Google Drive Rulebook Sync Endpoints
 app.get('/api/drive-rules', (_req: Request, res: Response) => {
   try {
@@ -750,6 +902,7 @@ app.post('/api/drive-rules/sync', (req: Request, res: Response) => {
 
 // Seed an initial demo game only on first boot when no DB file exists yet
 loadPersistedGames();
+loadPersistedMapNotes();
 if (!fs.existsSync(DB_FILE) && games.size === 0) {
   const starter = createInitialGame('Grand Valley Championship', 'river_valley', [
     { name: 'Sovereign Player', isAI: false },

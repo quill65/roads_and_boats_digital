@@ -2,7 +2,7 @@
  * Game Heads-Up Display (HUD): Top Navigation, Phase Controls, Scoreboard, and Actions
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { GameState, GoodType, Phase, Transporter } from '../game/types';
 import {
   BUILDING_SPECS,
@@ -11,11 +11,20 @@ import {
   TRANSPORTER_SPECS,
 } from '../game/constants';
 import {
+  canDropGoods,
+  canPickupGoods,
+  getAccessibleSidesOnHex,
   getBotProfile,
+  getGoodsOnSide,
+  getHexSideLayout,
+  getInteractableSidesForTransporter,
   getTransporterCargoWeight,
+  getTransporterSide,
   isOnlyActivePlayerRemaining,
+  isSoloGameState,
 } from '../game/engine';
 import { sounds } from '../utils/soundEffects';
+import { LearningRefsMenu } from './LearningRefsMenu';
 
 interface GameHUDProps {
   gameState: GameState;
@@ -25,13 +34,15 @@ interface GameHUDProps {
   selectedHexId: string | null;
   buildMode: 'none' | 'road' | 'factory' | 'wonder';
   onAdvancePhase: () => void;
-  onOpenCargo: () => void;
+  onPickupGoods: (transporterId: string, good: GoodType, amount: number, targetSide?: number) => void;
+  onDropGoods: (transporterId: string, good: GoodType, amount: number, targetSide?: number) => void;
   onOpenBuildMenu: () => void;
   onOpenWonder: () => void;
   onOpenAlmanac: () => void;
   onOpenTutorial: () => void;
   onOpenPlayerAid: () => void;
   onOpenHistory: () => void;
+  onOpenBookmarks?: () => void;
   onUndo: () => void;
   onRedo: () => void;
   onLeaveMatch: () => void;
@@ -47,6 +58,11 @@ interface GameHUDProps {
   onOpenResearch?: () => void;
   originalMatchId?: string | null;
   onReturnToOriginalMatch?: () => void;
+  mapNotesCount?: number;
+  noteMode?: boolean;
+  showMapNotes?: boolean;
+  onToggleNoteMode?: () => void;
+  onToggleShowMapNotes?: () => void;
 }
 
 export const GameHUD: React.FC<GameHUDProps> = ({
@@ -57,13 +73,15 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   selectedHexId,
   buildMode,
   onAdvancePhase,
-  onOpenCargo,
+  onPickupGoods,
+  onDropGoods,
   onOpenBuildMenu,
   onOpenWonder,
   onOpenAlmanac,
   onOpenTutorial,
   onOpenPlayerAid,
   onOpenHistory,
+  onOpenBookmarks,
   onUndo,
   onRedo,
   onLeaveMatch,
@@ -79,6 +97,11 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   onOpenResearch,
   originalMatchId,
   onReturnToOriginalMatch,
+  mapNotesCount = 0,
+  noteMode = false,
+  showMapNotes = true,
+  onToggleNoteMode,
+  onToggleShowMapNotes,
 }) => {
   const [confirmAction, setConfirmAction] = useState<'resign' | 'delete' | null>(null);
   const [isSubmittingMatchAction, setIsSubmittingMatchAction] = useState(false);
@@ -87,6 +110,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   const [editedName, setEditedName] = useState('');
   const [isSavingName, setIsSavingName] = useState(false);
   const [showMobileScores, setShowMobileScores] = useState(false);
+  const [selectedCargoSide, setSelectedCargoSide] = useState<number>(0);
 
   const handleCopyGameCode = async () => {
     try {
@@ -101,8 +125,10 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   const activePlayer = gameState.players.find(p => p.id === activePlayerId);
   const isReadOnly = Boolean(isObserving || activePlayer?.resigned);
   const willResignRemoveMatch = isOnlyActivePlayerRemaining(gameState, activePlayerId);
+  const isSoloGame = isSoloGameState(gameState);
   const historyCount = gameState.history?.length || 0;
   const redoCount = gameState.redoStack?.length || 0;
+  const bookmarkCount = gameState.bookmarks?.length || 0;
 
   // Selected Tile & Selected Transporter Map-Edge Legend Data
   const selectedHex = selectedHexId ? gameState.hexes[selectedHexId] || null : null;
@@ -182,6 +208,86 @@ export const GameHUD: React.FC<GameHUDProps> = ({
       }
     });
   }
+
+  // Inline Cargo Load/Unload computation for Selected Transporter Legend
+  const transporterHex = selectedTransporter
+    ? gameState.hexes[selectedTransporter.hexId] || null
+    : null;
+  const transporterLayout = transporterHex
+    ? getHexSideLayout(gameState, transporterHex.id)
+    : null;
+  const transporterSide = selectedTransporter
+    ? getTransporterSide(gameState, selectedTransporter)
+    : 0;
+  const transporterInteractableSides =
+    selectedTransporter && transporterHex && selectedTransporterSpec
+      ? selectedTransporterSpec.waterOnly
+        ? getInteractableSidesForTransporter(gameState, selectedTransporter)
+        : Array.from(getAccessibleSidesOnHex(gameState, transporterHex.id, transporterSide))
+      : [0];
+
+  useEffect(() => {
+    setSelectedCargoSide(transporterSide);
+  }, [selectedTransporter?.id, selectedTransporter?.hexId, transporterSide]);
+
+  const activeCargoSide = transporterInteractableSides.includes(selectedCargoSide)
+    ? selectedCargoSide
+    : transporterInteractableSides[0] ?? 0;
+
+  const canManageCargoInline = Boolean(
+    !isReadOnly &&
+      selectedTransporter &&
+      selectedTransporter.ownerId === activePlayerId &&
+      gameState.phase === 'MOVEMENT' &&
+      transporterHex
+  );
+
+  const transporterCargoRows: Array<{
+    good: GoodType;
+    loadedQty: number;
+    groundQty: number;
+    canLoad: boolean;
+    loadReason?: string;
+    canUnload: boolean;
+    unloadReason?: string;
+  }> = [];
+
+  if (canManageCargoInline && selectedTransporter && transporterHex) {
+    const bankGoods = getGoodsOnSide(gameState, transporterHex.id, activeCargoSide);
+    const targetSideArg = transporterLayout?.isSplit ? activeCargoSide : undefined;
+    (Object.keys(GOOD_DETAILS) as GoodType[]).forEach(g => {
+      const loadedQty = selectedTransporter.cargo?.[g] || 0;
+      const groundQty = bankGoods[g] || 0;
+      if (loadedQty > 0 || groundQty > 0) {
+        const pickCheck = canPickupGoods(
+          gameState,
+          selectedTransporter.id,
+          g,
+          1,
+          activePlayerId,
+          targetSideArg
+        );
+        const dropCheck = canDropGoods(
+          gameState,
+          selectedTransporter.id,
+          g,
+          1,
+          activePlayerId,
+          targetSideArg
+        );
+        transporterCargoRows.push({
+          good: g,
+          loadedQty,
+          groundQty,
+          canLoad: pickCheck.valid,
+          loadReason: pickCheck.reason,
+          canUnload: dropCheck.valid,
+          unloadReason: dropCheck.reason,
+        });
+      }
+    });
+  }
+  const hasInteractiveCargoRows = canManageCargoInline && transporterCargoRows.length > 0;
 
   const handleConfirmMatchAction = async () => {
     if (!confirmAction || isSubmittingMatchAction) return;
@@ -454,44 +560,83 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               <span>Memory</span>
             </button>
 
+            {isSoloGame && onOpenBookmarks && (
+              <button
+                onClick={onOpenBookmarks}
+                className="px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-bold text-amber-200 hover:text-white bg-amber-950/50 border border-amber-600/70 hover:bg-amber-900/60 transition-colors flex items-center gap-1 whitespace-nowrap shadow-sm"
+                title="Save exact solo game states as bookmarks and return anytime"
+              >
+                <span>🔖</span>
+                <span>Bookmarks</span>
+                {bookmarkCount > 0 && (
+                  <span className="text-[9px] font-mono font-extrabold bg-amber-400 text-slate-950 px-1 rounded-full">
+                    {bookmarkCount}
+                  </span>
+                )}
+              </button>
+            )}
+
+            {!isObserving && activePlayerId && onToggleNoteMode && (
+              <div className="inline-flex items-center rounded-lg overflow-hidden border border-slate-700/80 shadow-sm shrink-0">
+                <button
+                  type="button"
+                  onClick={onToggleNoteMode}
+                  className={`px-2 sm:px-2.5 py-1 sm:py-1.5 text-[11px] sm:text-xs font-bold transition-colors flex items-center gap-1 whitespace-nowrap ${
+                    noteMode
+                      ? 'bg-amber-400 text-slate-950'
+                      : 'bg-slate-900 text-amber-200 hover:text-white hover:bg-slate-800'
+                  }`}
+                  title="Add private planning notes anywhere on the map (hidden from other players)"
+                >
+                  <span>📝</span>
+                  <span>Notes</span>
+                  {mapNotesCount > 0 && (
+                    <span
+                      className={`text-[9px] font-mono font-extrabold px-1 rounded-full ${
+                        noteMode
+                          ? 'bg-slate-950 text-amber-300'
+                          : 'bg-amber-400 text-slate-950'
+                      }`}
+                    >
+                      {mapNotesCount}
+                    </span>
+                  )}
+                </button>
+                {mapNotesCount > 0 && onToggleShowMapNotes && (
+                  <button
+                    type="button"
+                    onClick={onToggleShowMapNotes}
+                    className={`px-1.5 py-1 sm:py-1.5 text-[11px] border-l border-slate-700/80 transition-colors ${
+                      showMapNotes
+                        ? 'bg-slate-900 text-slate-300 hover:text-white hover:bg-slate-800'
+                        : 'bg-slate-950 text-slate-500 hover:text-amber-300 hover:bg-slate-800'
+                    }`}
+                    title={showMapNotes ? 'Hide map notes' : 'Show map notes'}
+                    aria-label={showMapNotes ? 'Hide map notes' : 'Show map notes'}
+                  >
+                    {showMapNotes ? '👁️' : '🙈'}
+                  </button>
+                )}
+              </div>
+            )}
+
             {onOpenSolitaire && (
               <button
                 onClick={onOpenSolitaire}
                 className="px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-bold text-amber-300 hover:text-white bg-amber-950/40 border border-amber-600/70 hover:bg-amber-900/60 transition-colors flex items-center gap-1 whitespace-nowrap shadow-sm"
-                title="Pre-Made Scenarios: 1-Player Solo, Splotter Scenario Book PDF, 1–2 Player Maps & Multiplayer"
+                title="Scenarios: 1-Player Solo, Splotter Scenario Book PDF, 1–2 Player Maps & Multiplayer"
               >
                 <span>🗺️</span>
-                <span className="sm:hidden">Scenarios</span>
-                <span className="hidden sm:inline">Pre-Made Scenarios</span>
+                <span>Scenarios</span>
               </button>
             )}
 
-            <button
-              onClick={onOpenPlayerAid}
-              className="px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-bold text-amber-300 hover:text-white bg-slate-900 border border-amber-600/60 hover:bg-slate-800 transition-colors flex items-center gap-1 whitespace-nowrap"
-              title="Official Roads & Boats Player Aid (Buildings, Vehicles & Tech Tree)"
-            >
-              <span>📋</span>
-              <span>Player Aid</span>
-            </button>
-
-            <button
-              onClick={onOpenTutorial}
-              className="px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 border border-amber-300 shadow-md transition-all flex items-center gap-1 whitespace-nowrap"
-              title="Interactive Step-by-Step Tutorial"
-            >
-              <span>🎓</span>
-              <span>Tutorial</span>
-            </button>
-
-            <button
-              onClick={onOpenAlmanac}
-              className="px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-semibold text-slate-300 hover:text-white bg-slate-900 border border-slate-800 hover:bg-slate-800 transition-colors flex items-center gap-1 whitespace-nowrap"
-              title="Game Rules & Rulebook"
-            >
-              <span>📖</span>
-              <span>Game Rules</span>
-            </button>
+            <LearningRefsMenu
+              variant="hud"
+              onOpenPlayerAid={onOpenPlayerAid}
+              onOpenTutorial={onOpenTutorial}
+              onOpenGameRules={onOpenAlmanac}
+            />
 
             <button
               onClick={onOpenWonder}
@@ -583,9 +728,34 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               <div className="text-xs min-w-0">
                 <p className="font-bold text-amber-300">Road &amp; Bridge Building Mode</p>
                 <p className="text-slate-300 leading-snug">
-                  Tap 🛣️ Road (1 Stone — land border or riverbank) or 🌉 Bridge (2 Boards — cross river)
+                  Tap 🛣️ Road (1 Stone — land border or riverbank) or 🌉 Bridge (1 Stone — cross river)
                 </p>
               </div>
+            </div>
+          )}
+
+          {/* Private Map Notes Placement Mode Banner */}
+          {noteMode && !isObserving && onToggleNoteMode && (
+            <div className="pointer-events-auto mx-auto max-w-full px-3 sm:px-4 py-2 bg-slate-900/95 border border-amber-400/80 rounded-xl shadow-2xl backdrop-blur-md flex flex-wrap items-center gap-2.5">
+              <span className="text-lg sm:text-xl shrink-0">📝</span>
+              <div className="text-xs min-w-0">
+                <p className="font-bold text-amber-300 flex items-center gap-1.5">
+                  <span>Private Map Notes</span>
+                  <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                    🔒 Hidden from other players
+                  </span>
+                </p>
+                <p className="text-slate-300 leading-snug">
+                  Tap anywhere on the map to add a note · Click any note to edit/delete, or drag to move
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={onToggleNoteMode}
+                className="ml-auto px-2.5 py-1 rounded-lg text-[11px] font-extrabold text-slate-950 bg-amber-400 hover:bg-amber-300 transition-colors shrink-0"
+              >
+                Done
+              </button>
             </div>
           )}
         </div>
@@ -598,7 +768,11 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           {/* Selected Tile Legend — Lower Left */}
           <section
             aria-label="Selected Tile Legend"
-            className="pointer-events-auto lg:absolute lg:bottom-2.5 lg:left-2.5 min-w-[120px] max-w-[48%] lg:max-w-[196px] px-2 py-1.5 bg-slate-950/82 backdrop-blur-sm border border-slate-800/85 rounded-lg shadow-lg text-slate-200 leading-tight"
+            className={`pointer-events-auto lg:absolute lg:bottom-2.5 lg:left-2.5 min-w-[112px] ${
+              hasInteractiveCargoRows
+                ? 'max-w-[39%] sm:max-w-[196px]'
+                : 'max-w-[48%] lg:max-w-[196px]'
+            } px-2 py-1.5 bg-slate-950/82 backdrop-blur-sm border border-slate-800/85 rounded-lg shadow-lg text-slate-200 leading-tight`}
           >
             <div className="flex items-center justify-between gap-1.5 pb-1 border-b border-slate-800/80">
               <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 shrink-0">
@@ -675,10 +849,14 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             )}
           </section>
 
-          {/* Selected Transporter Legend — Lower Right */}
+          {/* Selected Transporter Legend — Lower Right (with Inline Load/Unload Controls) */}
           <section
             aria-label="Selected Transporter Legend"
-            className="pointer-events-auto lg:absolute lg:bottom-2.5 lg:right-2.5 min-w-[120px] max-w-[48%] lg:max-w-[196px] px-2 py-1.5 bg-slate-950/82 backdrop-blur-sm border border-slate-800/85 rounded-lg shadow-lg text-slate-200 leading-tight"
+            className={`pointer-events-auto lg:absolute lg:bottom-2.5 lg:right-2.5 min-w-[120px] ${
+              hasInteractiveCargoRows
+                ? 'max-w-[59%] sm:max-w-[252px] lg:max-w-[258px]'
+                : 'max-w-[48%] lg:max-w-[196px]'
+            } px-2 py-1.5 bg-slate-950/85 backdrop-blur-sm border border-slate-800/85 rounded-lg shadow-lg text-slate-200 leading-tight`}
           >
             <div className="flex items-center justify-between gap-1.5 pb-1 border-b border-slate-800/80">
               <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 shrink-0">
@@ -701,9 +879,9 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             </div>
 
             {selectedTransporter && selectedTransporterSpec && (
-              <div className="mt-1 space-y-0.5 text-[10px]">
+              <div className="mt-1 space-y-1 text-[10px]">
                 {/* Available Space & Moves Left */}
-                <div className="flex items-center justify-between gap-2 font-mono text-[10px]">
+                <div className="flex items-center justify-between gap-2 font-mono tabular-nums text-[10px]">
                   <span className="text-slate-400 whitespace-nowrap">
                     Spc{' '}
                     <strong className="text-emerald-300">{selectedTransporterAvailableSpace}</strong>
@@ -716,9 +894,154 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                   </span>
                 </div>
 
-                {/* Itemized Cargo on Transporter (including Geese) */}
+                {/* Split-River Bank Switcher (only when unit can access >1 bank during Movement) */}
+                {canManageCargoInline &&
+                  transporterLayout?.isSplit &&
+                  transporterInteractableSides.length > 1 && (
+                    <div className="flex flex-wrap items-center gap-1 pt-0.5 border-t border-slate-800/70">
+                      <span className="text-[9px] text-slate-400 mr-0.5">Bank</span>
+                      {transporterInteractableSides.map(s => {
+                        const reg = transporterLayout.sides[s];
+                        const shortLabel = reg?.compassLabel?.replace(' Bank', '') || `S${s + 1}`;
+                        return (
+                          <button
+                            key={s}
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation();
+                              setSelectedCargoSide(s);
+                            }}
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-semibold border transition-colors ${
+                              activeCargoSide === s
+                                ? 'bg-sky-400 text-slate-950 border-sky-300'
+                                : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-500'
+                            }`}
+                          >
+                            {shortLabel}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                {/* Itemized Cargo & Inline Load/Unload Controls */}
                 <div className="pt-0.5 border-t border-slate-800/70">
-                  {selectedTransporterCargoItems.length === 0 ? (
+                  {hasInteractiveCargoRows ? (
+                    <div className="space-y-0.5">
+                      <div className="flex items-center justify-between gap-1 text-[8px] text-slate-500 pb-0.5">
+                        <span>Item</span>
+                        <span className="flex items-center gap-2 shrink-0">
+                          <span className="font-mono">On/Tile</span>
+                          <span className="w-[52px] sm:w-[48px] text-center">Drop/Load</span>
+                        </span>
+                      </div>
+                      <ul className="space-y-1 max-h-28 sm:max-h-32 overflow-y-auto pr-0.5">
+                        {transporterCargoRows.map(row => {
+                          const detail = GOOD_DETAILS[row.good];
+                          const targetSideArg = transporterLayout?.isSplit
+                            ? activeCargoSide
+                            : undefined;
+                          return (
+                            <li
+                              key={row.good}
+                              className="flex items-center justify-between gap-1 text-[10px]"
+                            >
+                              <span
+                                className="flex items-center gap-0.5 min-w-0 truncate text-slate-200"
+                                title={
+                                  row.good === 'goose'
+                                    ? `${detail.name} (0 capacity)`
+                                    : detail.name
+                                }
+                              >
+                                <span className="shrink-0">{detail.icon}</span>
+                                <span className="truncate">{detail.name}</span>
+                              </span>
+                              <span className="flex items-center gap-1.5 shrink-0">
+                                <span className="font-mono tabular-nums text-[10px] whitespace-nowrap">
+                                  <span
+                                    className={
+                                      row.loadedQty > 0
+                                        ? 'font-bold text-amber-300'
+                                        : 'text-slate-500'
+                                    }
+                                    title={`${row.loadedQty} on unit`}
+                                  >
+                                    {row.loadedQty}
+                                  </span>
+                                  <span className="text-slate-600">/</span>
+                                  <span
+                                    className={
+                                      row.groundQty > 0
+                                        ? 'text-emerald-300'
+                                        : 'text-slate-600'
+                                    }
+                                    title={`${row.groundQty} on tile`}
+                                  >
+                                    {row.groundQty}
+                                  </span>
+                                </span>
+                                <span className="flex items-center gap-0.5 shrink-0">
+                                  <button
+                                    type="button"
+                                    disabled={!row.canUnload}
+                                    aria-label={`Unload 1 ${detail.name}`}
+                                    title={
+                                      row.canUnload
+                                        ? `Unload 1 ${detail.name} to tile`
+                                        : row.unloadReason || 'Cannot unload'
+                                    }
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      onDropGoods(
+                                        selectedTransporter.id,
+                                        row.good,
+                                        1,
+                                        targetSideArg
+                                      );
+                                    }}
+                                    className={`w-6 h-6 sm:w-5 sm:h-5 rounded flex items-center justify-center text-xs font-bold leading-none border transition-colors ${
+                                      row.canUnload
+                                        ? 'bg-amber-500/20 hover:bg-amber-500/35 text-amber-200 border-amber-500/50 active:scale-95'
+                                        : 'bg-slate-900/60 text-slate-600 border-slate-800 cursor-not-allowed'
+                                    }`}
+                                  >
+                                    −
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={!row.canLoad}
+                                    aria-label={`Load 1 ${detail.name}`}
+                                    title={
+                                      row.canLoad
+                                        ? `Load 1 ${detail.name} onto unit`
+                                        : row.loadReason || 'Cannot load'
+                                    }
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      onPickupGoods(
+                                        selectedTransporter.id,
+                                        row.good,
+                                        1,
+                                        targetSideArg
+                                      );
+                                    }}
+                                    className={`w-6 h-6 sm:w-5 sm:h-5 rounded flex items-center justify-center text-xs font-bold leading-none border transition-colors ${
+                                      row.canLoad
+                                        ? 'bg-emerald-500/20 hover:bg-emerald-500/35 text-emerald-200 border-emerald-500/50 active:scale-95'
+                                        : 'bg-slate-900/60 text-slate-600 border-slate-800 cursor-not-allowed'
+                                    }`}
+                                  >
+                                    +
+                                  </button>
+                                </span>
+                              </span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  ) : selectedTransporterCargoItems.length === 0 ? (
                     <div className="flex items-center justify-between gap-1.5">
                       <span className="text-[9px] text-slate-400">Cargo</span>
                       <span className="text-slate-500">Empty</span>
@@ -736,7 +1059,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                               <span className="shrink-0">{detail.icon}</span>
                               <span className="truncate">{detail.name}</span>
                             </span>
-                            <span className="font-bold font-mono text-amber-300 shrink-0">
+                            <span className="font-bold font-mono tabular-nums text-amber-300 shrink-0">
                               {item.qty}
                             </span>
                           </li>
@@ -751,15 +1074,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
         </div>
 
         {/* Bottom Floating Stage Advancement & Action Buttons */}
-        <div className="lg:absolute lg:bottom-3 lg:left-1/2 lg:-translate-x-1/2 flex flex-wrap items-center justify-center gap-1.5 sm:gap-2 w-full lg:w-auto lg:max-w-[calc(100vw-28rem)]">
-          {!isReadOnly && selectedTransporter && (
-            <button
-              onClick={onOpenCargo}
-              className="pointer-events-auto px-2.5 sm:px-3 py-1.5 sm:py-2 text-[11px] sm:text-xs font-bold text-slate-100 hover:text-white bg-slate-900/95 hover:bg-slate-800 rounded-xl transition-colors border border-slate-700 shadow-lg whitespace-nowrap"
-            >
-              🎒 Manage Cargo
-            </button>
-          )}
+        <div className="lg:absolute lg:bottom-3 lg:left-1/2 lg:-translate-x-1/2 flex flex-wrap items-center justify-center gap-1.5 sm:gap-2 w-full lg:w-auto lg:max-w-[calc(100vw-32rem)]">
 
           {!isReadOnly && gameState.phase === 'PRODUCTION' && hasResearchAvailable && onOpenResearch && (
             <button
@@ -791,9 +1106,18 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             </>
           )}
 
+          {!isReadOnly && isSoloGame && gameState.phase === 'COMPLETED' && bookmarkCount > 0 && onOpenBookmarks && (
+            <button
+              onClick={onOpenBookmarks}
+              className="pointer-events-auto min-h-[36px] sm:min-h-[40px] px-3.5 sm:px-4 py-1.5 sm:py-2 text-[11px] sm:text-xs font-extrabold text-amber-200 hover:text-slate-950 bg-amber-950/90 hover:bg-amber-400 border border-amber-500/80 rounded-xl transition-all shadow-xl whitespace-nowrap"
+            >
+              🔖 Return to Bookmark ({bookmarkCount})
+            </button>
+          )}
+
           <button
             onClick={onAdvancePhase}
-            disabled={isReadOnly}
+            disabled={isReadOnly || gameState.phase === 'COMPLETED'}
             className="pointer-events-auto min-h-[36px] sm:min-h-[40px] px-3.5 sm:px-5 py-1.5 sm:py-2.5 text-[11px] sm:text-xs font-extrabold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-xl transition-all shadow-xl hover:shadow-amber-400/20 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
           >
             {isObserving

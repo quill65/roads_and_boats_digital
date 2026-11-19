@@ -67,7 +67,7 @@ export const TokenLayer: React.FC<TokenLayerProps> = ({
           <g
             key={`bld_${hex.id}`}
             transform={`translate(${bx}, ${by})`}
-            className="cursor-pointer transition-transform hover:scale-115"
+            className="group cursor-pointer"
             onClick={e => {
               e.stopPropagation();
               if (
@@ -90,9 +90,9 @@ export const TokenLayer: React.FC<TokenLayerProps> = ({
               fill="#020617"
               stroke={owner?.color || '#cbd5e1'}
               strokeWidth="2.5"
-              className="shadow-2xl"
+              className="shadow-2xl transition-[filter] duration-150 group-hover:brightness-125"
             />
-            <text textAnchor="middle" dy="5" fontSize={layout.isSplit ? '13' : '15'}>
+            <text textAnchor="middle" dy="5" fontSize={layout.isSplit ? '13' : '15'} className="select-none pointer-events-none">
               {spec?.icon || '🏠'}
             </text>
           </g>
@@ -226,36 +226,45 @@ export const TokenLayer: React.FC<TokenLayerProps> = ({
             <g
               key={t.id}
               transform={`translate(${tx}, ${ty})`}
-              className="cursor-pointer transition-transform hover:scale-125"
+              className="group cursor-pointer"
               onClick={e => {
                 e.stopPropagation();
                 onSelectTransporter(t.id);
                 onSelectHex(t.hexId);
               }}
             >
+              {/* Subtle non-moving hover highlight ring */}
+              <circle
+                r="15.5"
+                fill="none"
+                stroke="#fde68a"
+                strokeWidth="2"
+                className="opacity-0 transition-opacity duration-150 group-hover:opacity-90 pointer-events-none"
+              />
+
               {isSelected && (
                 <circle
-                  r="20"
+                  r="18"
                   fill="none"
                   stroke="#38bdf8"
-                  strokeWidth="3.2"
+                  strokeWidth="3"
                   strokeDasharray="5,2.5"
-                  className="animate-spin"
+                  className="animate-spin pointer-events-none"
                 />
               )}
 
               <circle
-                r="13.5"
+                r="12.5"
                 fill={owner?.color || '#64748b'}
                 stroke={isSelected ? '#ffffff' : '#020617'}
                 strokeWidth="2.2"
-                className="shadow-2xl"
+                className="shadow-2xl transition-[filter] duration-150 group-hover:brightness-115"
               />
 
               <text
                 textAnchor="middle"
-                dy="4.5"
-                fontSize="12.5"
+                dy="4.2"
+                fontSize="12"
                 className="select-none pointer-events-none"
               >
                 {spec?.icon || '🫏'}
@@ -263,12 +272,13 @@ export const TokenLayer: React.FC<TokenLayerProps> = ({
 
               {isOwnedByActive && t.movesLeft > 0 && (
                 <circle
-                  cx="10"
-                  cy="-10"
-                  r="5.5"
+                  cx="9.5"
+                  cy="-9.5"
+                  r="5"
                   fill="#22c55e"
                   stroke="#020617"
                   strokeWidth="1.5"
+                  className="pointer-events-none"
                 />
               )}
 
@@ -279,14 +289,14 @@ export const TokenLayer: React.FC<TokenLayerProps> = ({
                     : carriedGeese > 0
                     ? `🪿${carriedGeese}`
                     : `${carriedWeight}/${t.capacity}`;
-                const badgeWidth = carriedGeese > 0 && carriedWeight > 0 ? 40 : 25;
+                const badgeWidth = carriedGeese > 0 && carriedWeight > 0 ? 38 : 24;
                 return (
-                  <g transform={`translate(${-badgeWidth / 2}, 9.5)`}>
+                  <g transform={`translate(${-badgeWidth / 2}, 9)`} className="pointer-events-none">
                     <rect
                       x="0"
                       y="0"
                       width={badgeWidth}
-                      height="12"
+                      height="11.5"
                       rx="4"
                       fill="#020617"
                       stroke={carriedWeight > 0 ? '#f59e0b' : '#cbd5e1'}
@@ -294,9 +304,9 @@ export const TokenLayer: React.FC<TokenLayerProps> = ({
                     />
                     <text
                       x={badgeWidth / 2}
-                      y="8.5"
+                      y="8.2"
                       textAnchor="middle"
-                      fontSize="8"
+                      fontSize="7.8"
                       fill={carriedWeight > 0 ? '#fbbf24' : '#f8fafc'}
                       className="font-mono-numbers font-bold"
                     >
@@ -309,48 +319,153 @@ export const TokenLayer: React.FC<TokenLayerProps> = ({
           );
         };
 
+        const positionedTokens: Array<{ t: Transporter; tx: number; ty: number }> = [];
+
+        Array.from(landBySide.entries()).forEach(([sideNum, group]) => {
+          const anchor = getHexSideVisualAnchor(gameState, hexId, sideNum, hexRadius);
+          const buildingOnThisSide =
+            Boolean(hex.building) && getBuildingSide(gameState, hex) === sideNum;
+          const total = group.length;
+
+          if (!layout.isSplit) {
+            // Unsplit tile: spread generously in 2D across the hex interior so tokens never cover each other
+            const baseDx = anchor.dx * 0.32;
+            const baseDy = anchor.dy * 0.32;
+            const maxR = hexRadius * 0.6;
+
+            group.forEach((t, idx) => {
+              let ox = 0;
+              let oy = 0;
+              if (total === 1) {
+                ox = 0;
+                oy = buildingOnThisSide ? 11 : -2;
+              } else if (total === 2) {
+                ox = idx === 0 ? -19 : 19;
+                oy = buildingOnThisSide ? 9 : -2;
+              } else if (total === 3) {
+                const angle = -Math.PI / 2 + (idx * Math.PI * 2) / 3;
+                const r = 23;
+                ox = Math.cos(angle) * r;
+                oy = Math.sin(angle) * r;
+              } else if (total === 4) {
+                const gridOffsets = [
+                  { x: -18, y: -16 },
+                  { x: 18, y: -16 },
+                  { x: -18, y: 16 },
+                  { x: 18, y: 16 },
+                ];
+                ox = gridOffsets[idx].x;
+                oy = gridOffsets[idx].y;
+              } else if (total <= 6) {
+                const angle = -Math.PI / 2 + (idx * Math.PI * 2) / total;
+                const r = total === 5 ? 26 : 28;
+                ox = Math.cos(angle) * r;
+                oy = Math.sin(angle) * r;
+              } else if (idx < 6) {
+                const angle = -Math.PI / 2 + (idx * Math.PI * 2) / 6;
+                ox = Math.cos(angle) * 31;
+                oy = Math.sin(angle) * 31;
+              } else {
+                const innerTotal = total - 6;
+                const innerIdx = idx - 6;
+                if (innerTotal === 1) {
+                  ox = 0;
+                  oy = 0;
+                } else {
+                  const angle = (innerIdx * Math.PI * 2) / innerTotal;
+                  ox = Math.cos(angle) * 12;
+                  oy = Math.sin(angle) * 12;
+                }
+              }
+
+              let dx = baseDx + ox;
+              let dy = baseDy + oy;
+              const dist = Math.hypot(dx, dy);
+              if (dist > maxR) {
+                dx = (dx / dist) * maxR;
+                dy = (dy / dist) * maxR;
+              }
+              positionedTokens.push({ t, tx: center.x + dx, ty: center.y + dy });
+            });
+            return;
+          }
+
+          // Split river tile: distribute strictly inside this bank's angular sector without stacking
+          const region = layout.sides[sideNum] || layout.sides[0];
+          const edgeMargin = Math.min(0.3, region.span * 0.18);
+          const minAng = region.startAngle + edgeMargin;
+          const maxAng = region.startAngle + region.span - edgeMargin;
+          const usableSpan = Math.max(0.18, maxAng - minAng);
+          const centerAng = region.startAngle + region.span / 2;
+
+          group.forEach((t, idx) => {
+            if (total === 1) {
+              const yNudge = buildingOnThisSide ? 6 : -1;
+              positionedTokens.push({
+                t,
+                tx: center.x + anchor.dx,
+                ty: center.y + anchor.dy + yNudge,
+              });
+              return;
+            }
+
+            const useTwoArcs = total >= 4 || (total === 3 && usableSpan < 1.15);
+            if (!useTwoArcs) {
+              const desiredSpan = Math.min(usableSpan, (total - 1) * 0.92);
+              const step = total > 1 ? desiredSpan / (total - 1) : 0;
+              const ang = centerAng - desiredSpan / 2 + idx * step;
+              const r =
+                usableSpan < 0.75
+                  ? hexRadius * (idx % 2 === 0 ? 0.34 : 0.58)
+                  : hexRadius * 0.52;
+              positionedTokens.push({
+                t,
+                tx: center.x + Math.cos(ang) * r,
+                ty: center.y + Math.sin(ang) * r,
+              });
+            } else {
+              const outerCount = Math.ceil(total * 0.6);
+              const isOuter = idx < outerCount;
+              const rowCount = isOuter ? outerCount : total - outerCount;
+              const rowIdx = isOuter ? idx : idx - outerCount;
+              const r = isOuter ? hexRadius * 0.58 : hexRadius * 0.33;
+              const maxStep = isOuter ? 0.72 : 0.95;
+              const rowSpan =
+                rowCount > 1 ? Math.min(usableSpan, (rowCount - 1) * maxStep) : 0;
+              const ang =
+                rowCount > 1
+                  ? centerAng - rowSpan / 2 + (rowIdx * rowSpan) / (rowCount - 1)
+                  : centerAng;
+              positionedTokens.push({
+                t,
+                tx: center.x + Math.cos(ang) * r,
+                ty: center.y + Math.sin(ang) * r,
+              });
+            }
+          });
+        });
+
+        waterList.forEach((t, wIdx) => {
+          const wOff = getWatercraftVisualOffset(
+            gameState,
+            t,
+            hexRadius,
+            wIdx,
+            waterList.length
+          );
+          positionedTokens.push({ t, tx: center.x + wOff.dx, ty: center.y + wOff.dy });
+        });
+
+        // Render the selected transporter last so its selection ring & badge sit on top
+        positionedTokens.sort((a, b) => {
+          const aSel = a.t.id === selectedTransporterId ? 1 : 0;
+          const bSel = b.t.id === selectedTransporterId ? 1 : 0;
+          return aSel - bSel;
+        });
+
         return (
           <g key={`transporters_${hexId}`}>
-            {Array.from(landBySide.entries()).flatMap(([sideNum, group]) => {
-              const anchor = getHexSideVisualAnchor(gameState, hexId, sideNum, hexRadius);
-              const isCenteredInterior = !layout.isSplit && anchor.dx === 0 && anchor.dy === 0;
-              const perpX = -Math.sin(anchor.angle);
-              const perpY = Math.cos(anchor.angle);
-              const buildingOnThisSide =
-                Boolean(hex.building) && getBuildingSide(gameState, hex) === sideNum;
-
-              return group.map((t, idx) => {
-                if (isCenteredInterior) {
-                  const total = group.length;
-                  const angle = (idx / total) * Math.PI * 2;
-                  const r = total > 1 ? 19 : 0;
-                  return renderTransporterToken(
-                    t,
-                    center.x + r * Math.cos(angle),
-                    center.y + r * Math.sin(angle) - 4
-                  );
-                }
-                const spacing = layout.isSplit
-                  ? Math.min(15, 22 / Math.max(1, group.length - 1))
-                  : 19;
-                const tangentOffset = (idx - (group.length - 1) / 2) * spacing;
-                const yNudge = buildingOnThisSide ? 3 : -1;
-                const tx = center.x + anchor.dx + perpX * tangentOffset;
-                const ty = center.y + anchor.dy + yNudge + perpY * tangentOffset;
-                return renderTransporterToken(t, tx, ty);
-              });
-            })}
-
-            {waterList.map((t, wIdx) => {
-              const wOff = getWatercraftVisualOffset(
-                gameState,
-                t,
-                hexRadius,
-                wIdx,
-                waterList.length
-              );
-              return renderTransporterToken(t, center.x + wOff.dx, center.y + wOff.dy);
-            })}
+            {positionedTokens.map(({ t, tx, ty }) => renderTransporterToken(t, tx, ty))}
           </g>
         );
       })}

@@ -32,6 +32,11 @@ export {
   undoMove,
   redoMove,
   revertToHistoryIndex,
+  createSoloBookmark,
+  getDefaultBookmarkName,
+  restoreSoloBookmark,
+  renameSoloBookmark,
+  deleteSoloBookmark,
 } from './engine/history';
 
 export {

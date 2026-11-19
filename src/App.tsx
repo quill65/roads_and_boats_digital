@@ -8,19 +8,21 @@ import {
   GameAction,
   GameState,
   GoodType,
+  MapNote,
+  MapNoteColor,
   ResearchUpgradeSelection,
 } from './game/types';
 import {
   canDeleteMatch,
   getEligibleResearchSites,
   getProductionCargoCandidates,
+  isSoloGameState,
   TransporterProductionCandidate,
   willAdvanceFromWonderRunProduction,
 } from './game/engine';
 import { getEdgeKey, parseHexKey } from './game/hexMath';
 import { HexBoard } from './components/HexBoard';
 import { GameHUD } from './components/GameHUD';
-import { TransporterCargoModal } from './components/TransporterCargoModal';
 import { BuildMenuModal } from './components/BuildMenuModal';
 import { WonderPyramidModal } from './components/WonderPyramidModal';
 import { ProductionCargoPromptModal } from './components/ProductionCargoPromptModal';
@@ -30,6 +32,7 @@ import { PlayerAidModal } from './components/PlayerAidModal';
 import { TutorialDrawer } from './components/TutorialDrawer';
 import { MultiplayerLobby } from './components/MultiplayerLobby';
 import { RevertHistoryDrawer } from './components/RevertHistoryDrawer';
+import { SoloBookmarksDrawer } from './components/SoloBookmarksDrawer';
 import { SolitaireModal } from './components/SolitaireModal';
 import { SolitaireScenario } from './game/scenarios';
 import { sounds } from './utils/soundEffects';
@@ -53,7 +56,6 @@ export default function App() {
   const [buildMode, setBuildMode] = useState<'none' | 'road' | 'factory' | 'wonder'>('none');
 
   // Modals & Drawers
-  const [showCargoModal, setShowCargoModal] = useState(false);
   const [showBuildModal, setShowBuildModal] = useState(false);
   const [showWonderModal, setShowWonderModal] = useState(false);
   const [showAlmanacModal, setShowAlmanacModal] = useState(false);
@@ -61,11 +63,17 @@ export default function App() {
   const [showTutorial, setShowTutorial] = useState(false);
   const [showSolitaireModal, setShowSolitaireModal] = useState(false);
   const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
+  const [showBookmarksDrawer, setShowBookmarksDrawer] = useState(false);
   const [showProductionResearchModal, setShowProductionResearchModal] = useState(false);
   const [productionCargoPrompt, setProductionCargoPrompt] = useState<TransporterProductionCandidate[] | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [originalMatchId, setOriginalMatchId] = useState<string | null>(null);
   const [isObserving, setIsObserving] = useState(false);
+
+  // Private per-player map planning notes (hidden from other players & observers)
+  const [mapNotes, setMapNotes] = useState<MapNote[]>([]);
+  const [showMapNotes, setShowMapNotes] = useState(true);
+  const [noteMode, setNoteMode] = useState(false);
 
   // Notification Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -127,6 +135,41 @@ export default function App() {
       sse.close();
     };
   }, [activeGameId]);
+
+  // Fetch private per-player map notes whenever entering a game as a seated player
+  useEffect(() => {
+    if (!activeGameId || !activePlayerId || isObserving) {
+      setMapNotes([]);
+      setNoteMode(false);
+      return;
+    }
+
+    let cancelled = false;
+    const fetchNotes = async () => {
+      try {
+        const params = new URLSearchParams({
+          playerId: activePlayerId,
+          clientId: getClientId(),
+        });
+        const res = await fetch(`/api/games/${encodeURIComponent(activeGameId)}/notes?${params.toString()}`);
+        if (!res.ok) {
+          if (!cancelled) setMapNotes([]);
+          return;
+        }
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data.notes)) {
+          setMapNotes(data.notes);
+        }
+      } catch (err) {
+        console.error('Failed to load private map notes:', err);
+      }
+    };
+
+    fetchNotes();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeGameId, activePlayerId, isObserving]);
 
   // Execute an action against the backend API
   const sendGameAction = async (action: GameAction) => {
@@ -238,11 +281,9 @@ export default function App() {
     const isBridge =
       options?.buildType !== undefined
         ? options.buildType === 'bridge'
-        : options?.material
-        ? options.material === 'boards'
         : Boolean(edge?.isRiver);
-    // Official rules: Bridges require strictly 2 Boards; Land Roads require strictly 1 Stone
-    const material: 'boards' | 'stone' = options?.material || (isBridge ? 'boards' : 'stone');
+    // Official rules: Both Land Roads and River Bridges require strictly 1 Stone
+    const material: 'boards' | 'stone' = options?.material || 'stone';
 
     const success = await sendGameAction({
       type: 'BUILD_ROAD',
@@ -259,7 +300,7 @@ export default function App() {
       setBuildMode('none');
       showToast(
         isBridge
-          ? 'Bridge constructed (2 Boards)!'
+          ? 'Bridge constructed (1 Stone)!'
           : edge?.isRiver
           ? 'Road paved alongside river (1 Stone)!'
           : 'Road paved (1 Stone)!'
@@ -411,6 +452,178 @@ export default function App() {
     }
   };
 
+  const handleCreateBookmark = async (name?: string, note?: string): Promise<boolean> => {
+    const success = await sendGameAction({
+      type: 'CREATE_BOOKMARK',
+      name,
+      note,
+    });
+    if (success) {
+      sounds.playBuild();
+      showToast(
+        name?.trim()
+          ? `Bookmark "${name.trim()}" saved!`
+          : 'Solo game state bookmarked!'
+      );
+    }
+    return success;
+  };
+
+  const handleRestoreBookmark = async (bookmarkId: string): Promise<boolean> => {
+    const targetName = gameState?.bookmarks?.find(b => b.id === bookmarkId)?.name;
+    const success = await sendGameAction({
+      type: 'RESTORE_BOOKMARK',
+      bookmarkId,
+    });
+    if (success) {
+      sounds.playPhaseAdvance();
+      setBuildMode('none');
+      setProductionCargoPrompt(null);
+      setShowBuildModal(false);
+      setShowWonderModal(false);
+      setShowBookmarksDrawer(false);
+      lastResearchPromptKeyRef.current = null;
+      showToast(
+        targetName
+          ? `Returned to bookmark "${targetName}" (Ctrl+Z to undo)`
+          : 'Returned to bookmarked state (Ctrl+Z to undo)'
+      );
+    }
+    return success;
+  };
+
+  const handleRenameBookmark = async (
+    bookmarkId: string,
+    name: string,
+    note?: string
+  ): Promise<boolean> => {
+    const success = await sendGameAction({
+      type: 'RENAME_BOOKMARK',
+      bookmarkId,
+      name,
+      note,
+    });
+    if (success) {
+      showToast(`Bookmark updated to "${name.trim()}"`);
+    }
+    return success;
+  };
+
+  const handleDeleteBookmark = async (bookmarkId: string): Promise<boolean> => {
+    const success = await sendGameAction({
+      type: 'DELETE_BOOKMARK',
+      bookmarkId,
+    });
+    if (success) {
+      showToast('Bookmark deleted');
+    }
+    return success;
+  };
+
+  // Private Map Notes CRUD handlers (never shared with other players)
+  const handleCreateMapNote = async (input: {
+    x: number;
+    y: number;
+    text: string;
+    color: MapNoteColor;
+  }): Promise<boolean> => {
+    if (!activeGameId || !activePlayerId || isObservingRef.current) return false;
+    try {
+      const res = await fetch(`/api/games/${encodeURIComponent(activeGameId)}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playerId: activePlayerId,
+          clientId: getClientId(),
+          ...input,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        showToast(data.error || 'Unable to save note');
+        return false;
+      }
+      if (Array.isArray(data.notes)) {
+        setMapNotes(data.notes);
+      }
+      setShowMapNotes(true);
+      return true;
+    } catch (err) {
+      console.error('Failed to create map note:', err);
+      showToast('Network error saving map note');
+      return false;
+    }
+  };
+
+  const handleUpdateMapNote = async (
+    noteId: string,
+    patch: { text?: string; x?: number; y?: number; color?: MapNoteColor }
+  ): Promise<boolean> => {
+    if (!activeGameId || !activePlayerId || isObservingRef.current) return false;
+    // Optimistically reflect drag/edit immediately for smooth responsiveness
+    setMapNotes(prev =>
+      prev.map(n => (n.id === noteId ? { ...n, ...patch, updatedAt: Date.now() } : n))
+    );
+    try {
+      const res = await fetch(
+        `/api/games/${encodeURIComponent(activeGameId)}/notes/${encodeURIComponent(noteId)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            playerId: activePlayerId,
+            clientId: getClientId(),
+            ...patch,
+          }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        showToast(data.error || 'Unable to update note');
+        return false;
+      }
+      if (Array.isArray(data.notes)) {
+        setMapNotes(data.notes);
+      }
+      return true;
+    } catch (err) {
+      console.error('Failed to update map note:', err);
+      showToast('Network error updating map note');
+      return false;
+    }
+  };
+
+  const handleDeleteMapNote = async (noteId: string): Promise<boolean> => {
+    if (!activeGameId || !activePlayerId || isObservingRef.current) return false;
+    try {
+      const res = await fetch(
+        `/api/games/${encodeURIComponent(activeGameId)}/notes/${encodeURIComponent(noteId)}`,
+        {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            playerId: activePlayerId,
+            clientId: getClientId(),
+          }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        showToast(data.error || 'Unable to delete note');
+        return false;
+      }
+      if (Array.isArray(data.notes)) {
+        setMapNotes(data.notes);
+      }
+      showToast('Map note deleted');
+      return true;
+    } catch (err) {
+      console.error('Failed to delete map note:', err);
+      showToast('Network error deleting map note');
+      return false;
+    }
+  };
+
   // Global keyboard shortcuts: Ctrl+Z (Undo) and Ctrl+Y (Redo)
   useEffect(() => {
     const handleGlobalShortcuts = (e: KeyboardEvent) => {
@@ -516,7 +729,8 @@ export default function App() {
     mapName: string,
     hostName: string,
     fillWithBots: boolean,
-    botProfileId?: string
+    botProfileId?: string,
+    maxRounds?: number
   ) => {
     try {
       const clientId = getClientId();
@@ -529,6 +743,7 @@ export default function App() {
           hostName,
           fillWithBots,
           botProfileId,
+          maxRounds,
           creatorClientId: clientId,
         }),
       });
@@ -789,6 +1004,13 @@ export default function App() {
       ? gameState.transporters[selectedTransporterId] || null
       : null;
 
+  // Clear stale transporter selection when restoring a bookmark or undoing moves
+  useEffect(() => {
+    if (selectedTransporterId && gameState && !gameState.transporters[selectedTransporterId]) {
+      setSelectedTransporterId(null);
+    }
+  }, [gameState, selectedTransporterId]);
+
   const activePlayerObj = gameState?.players.find(p => p.id === activePlayerId);
   const hasProductionResearchAvailable = Boolean(
     screen === 'game' &&
@@ -884,14 +1106,26 @@ export default function App() {
         selectedHexId={selectedHexId}
         buildMode={buildMode}
         onAdvancePhase={handleAdvancePhase}
-        onOpenCargo={() => setShowCargoModal(true)}
+        onPickupGoods={handlePickupGoods}
+        onDropGoods={handleDropGoods}
         onOpenBuildMenu={() => setShowBuildModal(true)}
         onOpenWonder={() => setShowWonderModal(true)}
         onOpenAlmanac={() => setShowAlmanacModal(true)}
         onOpenTutorial={() => setShowTutorial(true)}
         onOpenPlayerAid={() => setShowPlayerAidModal(true)}
         onOpenSolitaire={() => setShowSolitaireModal(true)}
-        onOpenHistory={() => setShowHistoryDrawer(true)}
+        onOpenHistory={() => {
+          setShowBookmarksDrawer(false);
+          setShowHistoryDrawer(true);
+        }}
+        onOpenBookmarks={
+          isSoloGameState(gameState)
+            ? () => {
+                setShowHistoryDrawer(false);
+                setShowBookmarksDrawer(true);
+              }
+            : undefined
+        }
         onUndo={handleUndoMove}
         onRedo={handleRedoMove}
         onLeaveMatch={() => {
@@ -899,21 +1133,38 @@ export default function App() {
           setActiveGameId(null);
           setGameState(null);
           setIsObserving(false);
+          setShowBookmarksDrawer(false);
+          setShowHistoryDrawer(false);
+          setNoteMode(false);
+          setMapNotes([]);
           setScreen('lobby');
         }}
         onResignMatch={handleResignMatch}
         onDeleteMatch={canDeleteActiveMatch ? () => handleDeleteGame(gameState.id) : undefined}
         onRenameMatch={newName => handleRenameGame(gameState.id, newName)}
         canDeleteMatch={canDeleteActiveMatch}
-        onToggleBuildRoad={() =>
-          setBuildMode(prev => (prev === 'road' ? 'none' : 'road'))
-        }
+        onToggleBuildRoad={() => {
+          setNoteMode(false);
+          setBuildMode(prev => (prev === 'road' ? 'none' : 'road'));
+        }}
         soundEnabled={soundEnabled}
         onToggleSound={handleToggleSound}
         hasResearchAvailable={hasProductionResearchAvailable}
         onOpenResearch={() => setShowProductionResearchModal(true)}
         originalMatchId={originalMatchId}
         onReturnToOriginalMatch={handleReturnToOriginalMatch}
+        mapNotesCount={mapNotes.length}
+        noteMode={noteMode}
+        showMapNotes={showMapNotes}
+        onToggleNoteMode={() => {
+          setBuildMode('none');
+          setNoteMode(prev => {
+            const next = !prev;
+            if (next) setShowMapNotes(true);
+            return next;
+          });
+        }}
+        onToggleShowMapNotes={() => setShowMapNotes(prev => !prev)}
       />
 
       {/* Hexagonal Interactive Board */}
@@ -923,6 +1174,14 @@ export default function App() {
         selectedTransporterId={selectedTransporterId}
         selectedHexId={selectedHexId}
         buildMode={buildMode}
+        mapNotes={mapNotes}
+        showMapNotes={showMapNotes}
+        noteMode={noteMode}
+        isObserving={isObserving}
+        onExitNoteMode={() => setNoteMode(false)}
+        onCreateMapNote={handleCreateMapNote}
+        onUpdateMapNote={handleUpdateMapNote}
+        onDeleteMapNote={handleDeleteMapNote}
         onSelectTransporter={tId => {
           setSelectedTransporterId(tId);
           if (tId && gameState.transporters[tId]) {
@@ -953,17 +1212,6 @@ export default function App() {
           <span className="shrink-0">⚠️</span>
           <span className="leading-snug">{toastMessage}</span>
         </div>
-      )}
-
-      {/* Cargo Modal */}
-      {showCargoModal && selectedTransporter && (
-        <TransporterCargoModal
-          gameState={gameState}
-          transporter={selectedTransporter}
-          onClose={() => setShowCargoModal(false)}
-          onPickup={handlePickupGoods}
-          onDrop={handleDropGoods}
-        />
       )}
 
       {/* Construction / Build Modal */}
@@ -1038,6 +1286,20 @@ export default function App() {
         onRedo={handleRedoMove}
         onRevertToIndex={handleRevertToHistory}
       />
+
+      {/* Solo Game Bookmarks Drawer */}
+      {isSoloGameState(gameState) && (
+        <SoloBookmarksDrawer
+          isOpen={showBookmarksDrawer}
+          gameState={gameState}
+          isReadOnly={Boolean(isObserving || activePlayerObj?.resigned)}
+          onClose={() => setShowBookmarksDrawer(false)}
+          onCreateBookmark={handleCreateBookmark}
+          onRestoreBookmark={handleRestoreBookmark}
+          onRenameBookmark={handleRenameBookmark}
+          onDeleteBookmark={handleDeleteBookmark}
+        />
+      )}
 
       {/* Pre-Made Scenarios Selection Modal */}
       <SolitaireModal

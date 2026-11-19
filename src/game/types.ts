@@ -175,6 +175,32 @@ export interface HistoryEntry {
   snapshot: string; // JSON serialized state
 }
 
+export interface GameBookmark {
+  id: string;
+  name: string;
+  note?: string;
+  round: number;
+  maxRounds: number;
+  phase: Phase;
+  score: number;
+  transporterCount: number;
+  buildingCount: number;
+  createdAt: number;
+  snapshot: string; // JSON serialized exact game state
+}
+
+export type MapNoteColor = 'amber' | 'sky' | 'emerald' | 'rose';
+
+export interface MapNote {
+  id: string;
+  x: number;
+  y: number;
+  text: string;
+  color: MapNoteColor;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface GameState {
   id: string;
   name: string;
@@ -195,6 +221,7 @@ export interface GameState {
   logs: GameLogEntry[];
   history: HistoryEntry[];
   redoStack: HistoryEntry[];
+  bookmarks?: GameBookmark[];
   isSolitaire?: boolean;
   scenarioId?: string;
   creatorClientId?: string;
@@ -237,5 +264,9 @@ export type GameAction =
   | { type: 'UNDO_MOVE' }
   | { type: 'REDO_MOVE' }
   | { type: 'REVERT_TO_HISTORY'; targetIndex: number }
+  | { type: 'CREATE_BOOKMARK'; name?: string; note?: string }
+  | { type: 'RESTORE_BOOKMARK'; bookmarkId: string }
+  | { type: 'RENAME_BOOKMARK'; bookmarkId: string; name: string; note?: string }
+  | { type: 'DELETE_BOOKMARK'; bookmarkId: string }
   | { type: 'END_TURN' }
   | { type: 'ADVANCE_PHASE'; allowTransporterCargo?: boolean | string[] };

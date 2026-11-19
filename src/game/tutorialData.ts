@@ -3,7 +3,7 @@
  * Accurate Splotter Spellen tabletop rules:
  * - Starting Inventory: 3 Donkeys, 5 Boards, 1 Stone, 2 Geese
  * - Donkey Breeding: 2 donkeys alone on an empty Pasture hex (no buildings/goods/cargo)
- * - Authentic 3rd Edition building costs, Stone Roads / Board Bridges, & opening strategy
+ * - Authentic 3rd Edition building costs, Stone Roads & Bridges, & opening strategy
  */
 
 export interface TutorialChecklistItem {
@@ -42,12 +42,12 @@ export const TUTORIAL_LESSONS: TutorialStep[] = [
     explanation: [
       'Welcome to Roads & Boats! In this renowned Splotter Spellen logistics masterpiece, you build an empire from humble pack animals into an industrial transport network.',
       'The board is a hexagonal landscape featuring Pasture (natural donkey breeding), Forest (timber trunks), Rock (stone quarries), Mountain (ore mines), Desert (open plains), and Water (navigable rivers & seas).',
-      'Rivers run along hexagonal borders. Unbridged rivers permit Donkeys to walk along riverbanks but block wheeled vehicles completely! Pave a 2-Board Bridge for Wagons and Steam Trucks.',
+      'Rivers run along hexagonal borders. Unbridged rivers permit Donkeys to walk along riverbanks but block wheeled vehicles completely! Pave a 1-Stone Bridge for Wagons and Steam Trucks.',
       'Watercraft (Rafts, Rowboats, and Steamers) move exclusively along water borders and sea tiles, transporting freight through natural water networks.',
     ],
     tacticalAdvice: [
       'Always inspect your terrain carefully during setup—find the nearest forest, pasture, rock, and mountain relative to your home camp.',
-      'Look for narrow river crossings where a 2-Board Bridge can connect wheeled Wagon routes.',
+      'Look for narrow river crossings where a 1-Stone Bridge can connect wheeled Wagon routes.',
     ],
     keyRules: [
       'Donkey capacity: Exactly 2 goods max.',
@@ -84,13 +84,13 @@ export const TUTORIAL_LESSONS: TutorialStep[] = [
       {
         step: '3. Donkey 3 (Stone Quarry & Paving)',
         transporter: '🫏 Donkey C',
-        action: 'Carry 2 Boards to an adjacent Rock hex (Quarry) or keep Boards for a River Bridge.',
-        why: 'Remember: Land Roads strictly require 1 Stone (not Boards!), while Bridges strictly cost 2 Boards. Building an early Quarry yields endless Stone for highways!',
+        action: 'Carry 2 Boards to an adjacent Rock hex to build a Quarry for Stone.',
+        why: 'Remember: Both Land Roads and River Bridges strictly require 1 Stone (not Boards!). Building an early Quarry yields endless Stone for highways and bridges!',
       },
       {
         step: '4. Authentic 3rd Edition Stock: 5 Boards, 1 Stone, 2 Geese!',
         transporter: '📦 Exact Starting Stock',
-        action: 'Allocate 1 Board (Woodcutter) + 2 Boards & 1 Stone (Sawmill) + 2 Boards (Quarry on Rock or Bridge).',
+        action: 'Allocate 1 Board (Woodcutter) + 2 Boards & 1 Stone (Sawmill) + 2 Boards (Quarry on Rock).',
         why: 'Your 5 starting Boards + 1 Stone fund Woodcutter (1B), Sawmill (2B+1S), and Quarry (2B), while your 2 starting Geese breed or fund early Research!',
       },
       {
@@ -104,23 +104,23 @@ export const TUTORIAL_LESSONS: TutorialStep[] = [
       'In 3rd Edition Roads & Boats, every player begins with 3 Donkeys, 5 Boards, 1 Stone, and 2 Geese at their home camp.',
       'Phase 1 (Production): You have no factories yet, so Round 1 production produces nothing. All your potential lies in your 3 Donkeys and starting supplies.',
       'Phase 2 (Movement): Your 3 Donkeys carry up to 2 items each. Load materials onto Donkeys to reach Forest (Woodcutter), Rock (Quarry), and a Sawmill site.',
-      'Phase 3 (Building): Build the Woodcutter (1 board) on Forest, Quarry (2 boards) on Rock, or Sawmill (2 boards, 1 stone) on non-desert land. Pave Roads with 1 Stone or Bridges with 2 Boards.',
+      'Phase 3 (Building): Build the Woodcutter (1 board) on Forest, Quarry (2 boards) on Rock, or Sawmill (2 boards, 1 stone) on non-desert land. Pave Roads or Bridges with 1 Stone.',
       'Phase 4 (Wonder): Pass to save starting supplies or contribute 1 good on your home tile for the first Wonder brick.',
     ],
     tacticalAdvice: [
       'Golden Rule of Turn 1: Never end Round 1 without a Woodcutter on Forest.',
-      'Build a Quarry on Rock early so you have steady Stone for paving 1-Stone roads.',
+      'Build a Quarry on Rock early so you have steady Stone for paving 1-Stone roads and bridges.',
       'Keep your donkeys close together so you can combine cargo for construction.',
     ],
     keyRules: [
       'Starting inventory: 3 Donkeys, 5 Boards, 1 Stone, and 2 Geese.',
       'Woodcutter costs 1 Board on Forest; Quarry costs 2 Boards on Rock.',
       'Sawmill costs 2 Boards & 1 Stone on any non-desert land hex.',
-      'Land Roads strictly cost 1 Stone; River Bridges strictly cost 2 Boards.',
+      'Land Roads and River Bridges both strictly cost 1 Stone.',
     ],
     uiSteps: [
       { label: 'Step 1: Select Donkey A', action: 'Click on Donkey A (🫏) at your home camp.' },
-      { label: 'Step 2: Load 1 Board', action: 'Click "🎒 Manage Cargo" in the bottom HUD → Click "+ Load (1)" on Boards to pick up 1 Board into cargo.' },
+      { label: 'Step 2: Load 1 Board', action: 'In the Unit legend (lower-right corner), click "+" next to Boards to load 1 Board onto your Donkey.' },
       { label: 'Step 3: Move to Forest', action: 'Click an adjacent Forest hex. Donkey A walks onto the timberland.' },
       { label: 'Step 4: Advance to Building', action: 'Click "Next Phase ⏩" in the bottom HUD to advance to BUILDING PHASE.' },
       { label: 'Step 5: Erect Woodcutter', action: 'Click Donkey A on the Forest → Click "🏗️ Build Workshop" → Click "Build" next to Woodcutter (costs 1 Board).' },
@@ -189,24 +189,24 @@ export const TUTORIAL_LESSONS: TutorialStep[] = [
     explanation: [
       'Without roads, your realm operates at a crawl. Off-road donkeys only travel 1 hex per round, and heavy Wagons cannot move at all!',
       'During the Building Phase, a transporter with 1 Stone on an adjacent hex can pave a Land Road along a dry border or alongside a riverbank on the same side of the river (Boards cannot build roads).',
-      'To cross over a river to the opposite bank, you must construct a Bridge instead, which strictly costs 2 Boards (Stone cannot build bridges).',
+      'To cross over a river to the opposite bank, construct a Bridge across the river border, which also strictly costs 1 Stone (Boards cannot build bridges).',
       'Once roads are paved, donkeys can use 2 road moves per turn. Furthermore, you can construct a Wagon Factory (2 Boards, 1 Stone) to build Wagons (cap 3, speed 3, strictly road-only)!',
     ],
     tacticalAdvice: [
       'Build a Quarry on Rock early so you can pave 1-Stone trunk roads connecting factories—including along riverbanks.',
-      'Save Boards for Bridges (2 Boards) when you need to cross a river!',
+      'Keep 1 Stone handy when you need a Bridge to cross a river!',
     ],
     keyRules: [
       'Land Road cost: Strictly 1 Stone per border (dry border or same-bank alongside a river).',
-      'River Bridge cost: Strictly 2 Boards per river border to link opposite banks.',
+      'River Bridge cost: Strictly 1 Stone per river border to link opposite banks.',
       'Wagons have 3 capacity and 3 speed, and are STRICTLY ROAD-ONLY.',
       'Bridges allow both land units to cross and watercraft to pass beneath.',
     ],
     uiSteps: [
       { label: 'Step 1: Position Builder', action: 'Select a donkey standing on either hex bordering the border you wish to pave.' },
       { label: 'Step 2: Start Road Mode', action: 'Click "🛣️ Pave Road" in the bottom HUD (or open "🏗️ Build Workshop" → "Roads & Bridges" → "Select Border on Board").' },
-      { label: 'Step 3: Click Border Marker', action: 'Click any glowing border marker (🛣️ for 1-Stone land roads, 🌉 for 2-Board river bridges) around your builder.' },
-      { label: 'Step 4: Road Paved!', action: 'The road cobblestones or bridge appear immediately, consuming 1 Stone (road) or 2 Boards (bridge).' },
+      { label: 'Step 3: Click Border Marker', action: 'Click any glowing border marker (🛣️ for 1-Stone land roads, 🌉 for 1-Stone river bridges) around your builder.' },
+      { label: 'Step 4: Road Paved!', action: 'The road cobblestones or bridge appear immediately, consuming 1 Stone.' },
       { label: 'Step 5: High-Speed Travel', action: 'In the next Movement Phase, your donkeys can move 2 hexes strictly along roads, doubling hauling velocity!' },
     ],
     recommendedMap: 'tutorial_meadow',

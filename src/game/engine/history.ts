@@ -2,8 +2,9 @@
  * Game Scoring, Logging, Snapshot & Undo/Redo Memory
  */
 
-import { GameState, GoodType } from '../types';
+import { GameBookmark, GameState, GoodType, Phase } from '../types';
 import { GOOD_DETAILS, ROADS_AND_BOATS_RULES } from '../constants';
+import { MAP_PRESETS } from '../maps';
 
 export function calculatePlayerScore(state: GameState, playerId: string): number {
   let score = 0;
@@ -191,4 +192,186 @@ export function revertToHistoryIndex(state: GameState, targetIndex: number): boo
   restoreStateFromSnapshot(state, targetEntry.snapshot);
   addLog(state, `Reverted ${revertedCount} moves back to: "${targetEntry.label}"`);
   return true;
+}
+
+const MAX_SOLO_BOOKMARKS = 50;
+const MAX_BOOKMARK_NAME_LENGTH = 80;
+
+function isSoloBookmarkEligible(state: GameState): boolean {
+  return Boolean(state.isSolitaire || state.mapName.startsWith('scenario_'));
+}
+
+function formatBookmarkPhase(phase: Phase): string {
+  switch (phase) {
+    case 'PRODUCTION':
+      return 'Production';
+    case 'MOVEMENT':
+      return 'Movement';
+    case 'BUILDING':
+      return 'Building';
+    case 'WONDER':
+      return 'Wonder';
+    case 'COMPLETED':
+      return 'Completed';
+  }
+}
+
+export function getDefaultBookmarkName(
+  state: Pick<GameState, 'mapName' | 'round' | 'phase'>
+): string {
+  const mapDisplayName = MAP_PRESETS[state.mapName]?.name || state.mapName;
+  return `${mapDisplayName} · R${state.round} ${formatBookmarkPhase(state.phase)}`.slice(
+    0,
+    MAX_BOOKMARK_NAME_LENGTH
+  );
+}
+
+export function createSoloBookmark(
+  state: GameState,
+  options?: { name?: string; note?: string }
+): { success: boolean; bookmark?: GameBookmark; reason?: string } {
+  if (!isSoloBookmarkEligible(state)) {
+    return {
+      success: false,
+      reason: 'Bookmarks are only available in solo games.',
+    };
+  }
+
+  if (!state.bookmarks) state.bookmarks = [];
+  if (state.bookmarks.length >= MAX_SOLO_BOOKMARKS) {
+    return {
+      success: false,
+      reason: `Maximum of ${MAX_SOLO_BOOKMARKS} bookmarks reached. Delete an older bookmark first.`,
+    };
+  }
+
+  // Ensure score is up-to-date before capturing exact snapshot
+  calculateScores(state);
+  const snapshot = createSnapshotFromState(state);
+  const soloPlayer = state.players[0];
+  const score = soloPlayer?.score ?? 0;
+  const transporterCount = Object.values(state.transporters).filter(
+    t => !soloPlayer || t.ownerId === soloPlayer.id
+  ).length;
+  const buildingCount = Object.values(state.hexes).filter(h => Boolean(h.building)).length;
+
+  const trimmedName = (options?.name || '').trim().slice(0, MAX_BOOKMARK_NAME_LENGTH);
+  const defaultName = getDefaultBookmarkName(state);
+  const trimmedNote = (options?.note || '').trim().slice(0, 120);
+
+  const now = Date.now();
+  const bookmark: GameBookmark = {
+    id: `bm_${now}_${Math.random().toString(36).substring(2, 7)}`,
+    name: trimmedName || defaultName,
+    note: trimmedNote || undefined,
+    round: state.round,
+    maxRounds: state.maxRounds,
+    phase: state.phase,
+    score,
+    transporterCount,
+    buildingCount,
+    createdAt: now,
+    snapshot,
+  };
+
+  state.bookmarks.push(bookmark);
+  state.updatedAt = now;
+  addLog(state, `Saved bookmark "${bookmark.name}" (R${bookmark.round} · ${bookmark.phase})`, soloPlayer?.id);
+
+  return { success: true, bookmark };
+}
+
+export function restoreSoloBookmark(
+  state: GameState,
+  bookmarkId: string
+): { success: boolean; bookmark?: GameBookmark; reason?: string } {
+  if (!isSoloBookmarkEligible(state)) {
+    return {
+      success: false,
+      reason: 'Bookmarks are only available in solo games.',
+    };
+  }
+
+  const bookmark = (state.bookmarks || []).find(b => b.id === bookmarkId);
+  if (!bookmark) {
+    return {
+      success: false,
+      reason: 'Bookmark not found.',
+    };
+  }
+
+  const soloPlayerId = state.players[0]?.id;
+  // Save current state to Undo history so accidental restores can always be undone
+  recordHistorySnapshot(state, `Before restoring bookmark "${bookmark.name}"`, soloPlayerId);
+
+  restoreStateFromSnapshot(state, bookmark.snapshot);
+  addLog(state, `Returned to bookmark "${bookmark.name}" (R${bookmark.round} · ${bookmark.phase})`, state.players[0]?.id);
+
+  return { success: true, bookmark };
+}
+
+export function renameSoloBookmark(
+  state: GameState,
+  bookmarkId: string,
+  name: string,
+  note?: string
+): { success: boolean; bookmark?: GameBookmark; reason?: string } {
+  if (!isSoloBookmarkEligible(state)) {
+    return {
+      success: false,
+      reason: 'Bookmarks are only available in solo games.',
+    };
+  }
+
+  const bookmark = (state.bookmarks || []).find(b => b.id === bookmarkId);
+  if (!bookmark) {
+    return {
+      success: false,
+      reason: 'Bookmark not found.',
+    };
+  }
+
+  const trimmedName = (name || '').trim().slice(0, MAX_BOOKMARK_NAME_LENGTH);
+  if (!trimmedName) {
+    return {
+      success: false,
+      reason: 'Bookmark name cannot be empty.',
+    };
+  }
+
+  bookmark.name = trimmedName;
+  if (note !== undefined) {
+    const trimmedNote = note.trim().slice(0, 120);
+    bookmark.note = trimmedNote || undefined;
+  }
+  state.updatedAt = Date.now();
+
+  return { success: true, bookmark };
+}
+
+export function deleteSoloBookmark(
+  state: GameState,
+  bookmarkId: string
+): { success: boolean; reason?: string } {
+  if (!isSoloBookmarkEligible(state)) {
+    return {
+      success: false,
+      reason: 'Bookmarks are only available in solo games.',
+    };
+  }
+
+  if (!state.bookmarks || state.bookmarks.length === 0) {
+    return { success: false, reason: 'Bookmark not found.' };
+  }
+
+  const idx = state.bookmarks.findIndex(b => b.id === bookmarkId);
+  if (idx === -1) {
+    return { success: false, reason: 'Bookmark not found.' };
+  }
+
+  const [removed] = state.bookmarks.splice(idx, 1);
+  state.updatedAt = Date.now();
+  addLog(state, `Deleted bookmark "${removed.name}"`, state.players[0]?.id);
+
+  return { success: true };
 }

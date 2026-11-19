@@ -725,7 +725,7 @@ export const MULTIPLAYER_AND_DRIVE_SCENARIOS: ScenarioDefinition[] = [
     mapPresetId: 'splotter_atlantis',
     keyTactics: [
       'Attributed to Splotter Spellen (Jeroen Doumen & Joris Wiersinga) — Scenario 340.',
-      'Build Bridges (2 Boards) across the radial rivers early or use Rafts along the three river spokes.',
+      'Build Bridges (1 Stone) across the radial rivers early or use Rafts along the three river spokes.',
       'When the 45th Wonder brick is placed, the inner Desert ring (1,0), (0,-1), (-1,1) transforms into lush Pasture.',
     ],
     startingNotes: '3 Donkeys, 5 Boards, 1 Stone, 2 Geese per player at (-2,0), (2,-2), and (0,2).',
@@ -815,7 +815,7 @@ export const MULTIPLAYER_AND_DRIVE_SCENARIOS: ScenarioDefinition[] = [
     mapPresetId: 'splotter_mississippi',
     keyTactics: [
       'Attributed to Splotter Spellen (Jeroen Doumen & Joris Wiersinga) — Scenario 410.',
-      'Eight river edges divide the central basin—place Bridges (2 Boards) at key central confluences (0,0) and (0,-1).',
+      'Eight river edges divide the central basin—place Bridges (1 Stone) at key central confluences (0,0) and (0,-1).',
       'Use river Rafts and Rowboats along the central channel to move heavy Gold, Iron, and Stone without needing long road networks.',
     ],
     startingNotes: '3 Donkeys, 5 Boards, 1 Stone, 2 Geese per player across the four river quadrants.',
@@ -903,13 +903,13 @@ export const MULTIPLAYER_AND_DRIVE_SCENARIOS: ScenarioDefinition[] = [
     description:
       'From the 1–2 Player Scenario Collection: A compact 15-tile river duel where the central pasture belt is separated from northern forests/quarries and southern gold mountains by two parallel rivers.',
     objective:
-      'Bridge both rivers efficiently (2 Boards per bridge) to unite timber, stone, and mountain gold.',
+      'Bridge both rivers efficiently (1 Stone per bridge) to unite timber, stone, and mountain gold.',
     targetScore: 420,
     maxRounds: 20,
     mapPresetId: 'duel_two_bridges',
     keyTactics: [
       'Attributed to Splotter Spellen (Jeroen Doumen & Joris Wiersinga) — Scenario 210 (`r&b_-_1-2...`).',
-      'Spend 2 of your 5 starting Boards to bridge north into the Forest/Rock bank on Turn 1, then build a Woodcutter and Sawmill.',
+      'Spend your starting 1 Stone to bridge north into the Forest/Rock bank on Turn 1, then build a Woodcutter, Sawmill, and Quarry.',
       'Bridge south across the second river once your Stone Factory is producing Stone for Mines and a Mint.',
     ],
     startingNotes: '3 Donkeys, 5 Boards, 1 Stone, 2 Geese on Central Island Pastures (-1,0) and (1,0).',

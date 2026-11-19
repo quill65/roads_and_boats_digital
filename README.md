@@ -11,7 +11,7 @@ Players command donkeys, wagons, steam trucks, rafts, rowboats, and steamers acr
 1. **Rules-Faithful 3rd Edition Engine**
    - Server-authoritative TypeScript rules engine (`src/game/rules-engine.ts`, `src/game/drive-ruleset.ts`, `src/game/engine/`) enforcing the 4-phase round structure (**Production → Movement → Building → Wonder**).
    - **River-Divided Tile Isolation**: Tiles split by unbridged rivers track banks independently—construction materials, factory inputs/outputs, pickup/drop access, and road/bridge connections respect river barriers until a bridge connects the banks.
-   - **Authentic Logistics & Production**: Fixed 2-good donkey capacity (geese consume 0 capacity), stone-only land roads, board-only river bridges, finite mine ore draw pools, privacy breeding for Donkeys and Geese (strictly 2 on an isolated empty pasture), technology research (`2 Geese + 1 Paper`), and building/producing using either ground goods or loaded transporter cargo (with an interactive pre-production cargo prompt).
+   - **Authentic Logistics & Production**: Fixed 2-good donkey capacity (geese consume 0 capacity), stone-only land roads and river bridges (1 Stone each), finite mine ore draw pools, privacy breeding for Donkeys and Geese (strictly 2 on an isolated empty pasture), technology research (`2 Geese + 1 Paper`), and building/producing using either ground goods or loaded transporter cargo (with an interactive pre-production cargo prompt).
    - **Wonder & Victory Scoring**: Escalating per-round brick costs, neutral brick progression, desert-to-pasture irrigation trigger, proportional row scoring, and cargo wealth scoring (Gold, Coins, Stock Certificates).
 
 2. **Full Solo, Bot, and Real-Time Multiplayer Play**

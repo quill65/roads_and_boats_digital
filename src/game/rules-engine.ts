@@ -218,7 +218,7 @@ export interface InfrastructureRules {
   };
   readonly bridge: {
     readonly materialCost: number;
-    readonly allowedMaterials: ReadonlyArray<'boards'>;
+    readonly allowedMaterials: ReadonlyArray<'stone'>;
     readonly requiresRiverBorder: boolean;
   };
   readonly wall: {
@@ -234,8 +234,8 @@ export const INFRASTRUCTURE_RULES: InfrastructureRules = {
     disallowOnOpenDeepSea: true,
   },
   bridge: {
-    materialCost: 2, // Official rule: 2 Boards across a river border (cannot use Stone)
-    allowedMaterials: ['boards'],
+    materialCost: 1, // Official rule: 1 Stone across a river border (cannot use Boards)
+    allowedMaterials: ['stone'],
     requiresRiverBorder: true,
   },
   wall: {

@@ -373,8 +373,8 @@ export const SolitaireModal: React.FC<SolitaireModalProps> = ({
               type="button"
               onClick={onClose}
               className="w-9 h-9 rounded-lg flex items-center justify-center bg-slate-900 border border-slate-700 text-slate-200 hover:text-white hover:bg-slate-800 hover:border-amber-400/70 transition-colors shrink-0 text-sm font-bold"
-              aria-label="Close Pre-Made Scenarios"
-              title="Close Pre-Made Scenarios"
+              aria-label="Close Scenarios"
+              title="Close Scenarios"
             >
               ✕
             </button>
@@ -385,7 +385,7 @@ export const SolitaireModal: React.FC<SolitaireModalProps> = ({
               id="premade-scenarios-title"
               className="text-sm font-bold font-serif-title text-white tracking-wide truncate"
             >
-              Pre-Made Scenarios
+              Scenarios
             </h2>
             <span className="px-1.5 py-0.5 text-[11px] font-mono font-bold rounded bg-amber-950/80 border border-amber-600/60 text-amber-300 shrink-0">
               {filteredScenarios.length} / {ALL_SCENARIOS.length}
@@ -474,7 +474,7 @@ export const SolitaireModal: React.FC<SolitaireModalProps> = ({
           {filteredScenarios.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center py-16">
               <p className="text-sm text-slate-400 mb-3">
-                No pre-made scenarios match the selected Map Set, Player Count, and Skill Level filters.
+                No scenarios match the selected Map Set, Player Count, and Skill Level filters.
               </p>
               <button
                 type="button"

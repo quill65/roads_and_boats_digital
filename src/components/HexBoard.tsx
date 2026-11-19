@@ -4,7 +4,7 @@
  */
 
 import React, { useMemo, useRef } from 'react';
-import { GameState, Transporter } from '../game/types';
+import { GameState, MapNote, MapNoteColor, Transporter } from '../game/types';
 import {
   getHexCornerPoints,
   getSharedEdgeSegment,
@@ -16,6 +16,7 @@ import { useBoardViewport } from './board/useBoardViewport';
 import { HexTileLayer } from './board/HexTileLayer';
 import { EdgeAndRailLayer, SelectEdgeRoadOptions, TileRiverPathData } from './board/EdgeAndRailLayer';
 import { TokenLayer } from './board/TokenLayer';
+import { MapNotesLayer } from './board/MapNotesLayer';
 
 interface HexBoardProps {
   gameState: GameState;
@@ -23,6 +24,22 @@ interface HexBoardProps {
   selectedTransporterId: string | null;
   selectedHexId: string | null;
   buildMode: 'none' | 'road' | 'factory' | 'wonder';
+  mapNotes?: MapNote[];
+  showMapNotes?: boolean;
+  noteMode?: boolean;
+  isObserving?: boolean;
+  onExitNoteMode?: () => void;
+  onCreateMapNote?: (input: {
+    x: number;
+    y: number;
+    text: string;
+    color: MapNoteColor;
+  }) => Promise<boolean> | void;
+  onUpdateMapNote?: (
+    noteId: string,
+    patch: { text?: string; x?: number; y?: number; color?: MapNoteColor }
+  ) => Promise<boolean> | void;
+  onDeleteMapNote?: (noteId: string) => Promise<boolean> | void;
   onSelectTransporter: (transporterId: string | null) => void;
   onSelectHex: (hexId: string | null) => void;
   onMoveTransporter: (transporterId: string, targetHexId: string, targetSide?: number) => void;
@@ -37,6 +54,14 @@ export const HexBoard: React.FC<HexBoardProps> = ({
   selectedTransporterId,
   selectedHexId,
   buildMode,
+  mapNotes = [],
+  showMapNotes = true,
+  noteMode = false,
+  isObserving = false,
+  onExitNoteMode,
+  onCreateMapNote,
+  onUpdateMapNote,
+  onDeleteMapNote,
   onSelectTransporter,
   onSelectHex,
   onMoveTransporter,
@@ -209,6 +234,22 @@ export const HexBoard: React.FC<HexBoardProps> = ({
           />
         </g>
       </svg>
+
+      {onCreateMapNote && onUpdateMapNote && onDeleteMapNote && (
+        <MapNotesLayer
+          containerRef={containerRef}
+          viewTransform={viewTransform}
+          notes={mapNotes}
+          showNotes={showMapNotes}
+          noteMode={noteMode}
+          disabled={isObserving || !activePlayerId}
+          isRoadMode={buildMode === 'road'}
+          onExitNoteMode={onExitNoteMode}
+          onCreateNote={onCreateMapNote}
+          onUpdateNote={onUpdateMapNote}
+          onDeleteNote={onDeleteMapNote}
+        />
+      )}
     </div>
   );
 };

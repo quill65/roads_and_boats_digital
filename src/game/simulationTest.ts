@@ -28,6 +28,8 @@ import {
   canResearchTech,
   calculateScores,
   createInitialGame,
+  createSoloBookmark,
+  deleteSoloBookmark,
   doesSideTouchRoad,
   executeBuildFactory,
   executeBuildRoad,
@@ -58,12 +60,22 @@ import {
   isPlayerMatchStarter,
   reconnectSoloPlayer,
   redoMove,
+  renameSoloBookmark,
   resignPlayer,
+  restoreSoloBookmark,
   runBotTurn,
   runProductionPhase,
   undoMove,
   willAdvanceFromWonderRunProduction,
 } from './engine';
+import {
+  createPlayerMapNote,
+  deleteAllMapNotesForGame,
+  deletePlayerMapNote,
+  listPlayerMapNotes,
+  MapNotesDatabase,
+  updatePlayerMapNote,
+} from './mapNotes';
 import { BuildingType, GameState, GoodType } from './types';
 import { BUILDING_SPECS, TRANSPORTER_SPECS } from './constants';
 import { areHexNeighbors, getEdgeKey, getSharedEdgeSegment, hexToPixel, parseHexKey } from './hexMath';
@@ -547,7 +559,7 @@ export function testRoadAndBridgeConstruction(): TestResult {
     }
     details.push('✓ Road paved successfully using 1 Stone (Boards untouched)');
 
-    // Test Bridge Construction across a river: strictly 2 Boards (Stone must be REJECTED!)
+    // Test Bridge Construction across a river: strictly 1 Stone (Boards must be REJECTED!)
     const riverEdge = Object.values(state.edges).find(e => e.isRiver && e.improvement === 'none');
     if (riverEdge) {
       const bridgeSide = getHexSideLayout(state, riverEdge.hexA).sides.find(s =>
@@ -558,7 +570,21 @@ export function testRoadAndBridgeConstruction(): TestResult {
       addGoodOnSide(state, riverEdge.hexA, bridgeSide, 'boards', 2);
       addGoodOnSide(state, riverEdge.hexA, bridgeSide, 'stone', 2);
 
-      const illegalStoneBridge = canBuildRoad(
+      const illegalBoardsBridge = canBuildRoad(
+        state,
+        player1.id,
+        riverEdge.hexA,
+        riverEdge.hexB,
+        'boards',
+        donkey.id,
+        { buildType: 'bridge' }
+      );
+      if (illegalBoardsBridge.valid) {
+        throw new Error('River Bridges MUST reject Boards (1 Stone only)!');
+      }
+      details.push('✓ Verified River Bridge strictly rejects Boards');
+
+      const canBridge = canBuildRoad(
         state,
         player1.id,
         riverEdge.hexA,
@@ -567,22 +593,24 @@ export function testRoadAndBridgeConstruction(): TestResult {
         donkey.id,
         { buildType: 'bridge' }
       );
-      if (illegalStoneBridge.valid) {
-        throw new Error('River Bridges MUST reject Stone (2 Boards only per official rules)!');
-      }
-      details.push('✓ Verified River Bridge strictly rejects Stone');
-
-      const canBridge = canBuildRoad(state, player1.id, riverEdge.hexA, riverEdge.hexB, 'boards', donkey.id);
-      if (!canBridge.valid || !canBridge.isBridge || canBridge.cost !== 2) {
+      if (!canBridge.valid || !canBridge.isBridge || canBridge.cost !== 1) {
         throw new Error(`Bridge check failed: ${canBridge.reason}`);
       }
-      details.push('✓ River border recognized as Bridge requirement costing 2 Boards');
+      details.push('✓ River border recognized as Bridge requirement costing 1 Stone');
 
-      const bridgeBuilt = executeBuildRoad(state, player1.id, riverEdge.hexA, riverEdge.hexB, 'boards', donkey.id);
+      const bridgeBuilt = executeBuildRoad(
+        state,
+        player1.id,
+        riverEdge.hexA,
+        riverEdge.hexB,
+        'stone',
+        donkey.id,
+        { buildType: 'bridge' }
+      );
       if (!bridgeBuilt || state.edges[riverEdge.id]?.improvement !== 'bridge') {
         throw new Error('Bridge execution failed');
       }
-      details.push('✓ River Bridge paved successfully with 2 Boards');
+      details.push('✓ River Bridge paved successfully with 1 Stone');
 
       // Now verify donkey CAN cross the river over the bridge!
       state.phase = 'MOVEMENT';
@@ -609,7 +637,11 @@ export function testRoadAndBridgeConstruction(): TestResult {
       if (canBuildRoad(state, player1.id, coastalEdge.hexA, coastalEdge.hexB, 'stone', donkey.id).valid) {
         throw new Error('Land Road must NOT be buildable across a coastal edge into open water!');
       }
-      if (canBuildRoad(state, player1.id, coastalEdge.hexA, coastalEdge.hexB, 'boards', donkey.id).valid) {
+      if (
+        canBuildRoad(state, player1.id, coastalEdge.hexA, coastalEdge.hexB, 'stone', donkey.id, {
+          buildType: 'bridge',
+        }).valid
+      ) {
         throw new Error('Bridge must NOT be buildable across a coastal edge into open water!');
       }
       details.push('✓ Verified Land Roads & Bridges strictly reject coastal/open-water borders');
@@ -1542,6 +1574,38 @@ export function testSolitaireScenarioRules(): TestResult {
       throw new Error('reconnectSoloPlayer failed to preserve sole player and game progress');
     }
 
+    // Verify 20-round solo game with 16 pre-built Foundation bricks does NOT end prematurely at Round 17
+    if ((s42Game.neutralBricksUsed || 0) !== 0) {
+      throw new Error(`Expected initial neutralBricksUsed = 0 (pre-built Tier 0 does not consume 33-turn limit), got ${s42Game.neutralBricksUsed}`);
+    }
+    const solo20 = createInitialGame('Solo 20-Round Progression', 'scenario_mesopotamia', [
+      { name: 'Solo Sovereign', isAI: false },
+    ], { isSolitaire: true, scenarioId: 'mesopotamia', maxRounds: 20 });
+    for (let r = 1; r <= 17; r++) {
+      advancePhase(solo20); // PRODUCTION -> MOVEMENT
+      advancePhase(solo20); // MOVEMENT -> BUILDING
+      advancePhase(solo20); // BUILDING -> WONDER
+      advancePhase(solo20); // WONDER -> next round (or finish)
+    }
+    if (solo20.status !== 'playing' || solo20.round !== 18) {
+      throw new Error(`Solo 20-round game ended prematurely after Round 17 (status=${solo20.status}, round=${solo20.round}, neutral=${solo20.neutralBricksUsed})`);
+    }
+    const checkSoloEnd = (g: GameState, targetRound: number) => {
+      while (g.status === 'playing' && g.round <= targetRound + 5) {
+        advancePhase(g);
+      }
+      if (g.status !== 'finished' || g.round !== targetRound) {
+        throw new Error(`Expected ${targetRound}-round solo game to finish at Round ${targetRound}, got round=${g.round} (status=${g.status})`);
+      }
+    };
+    checkSoloEnd(solo20, 20);
+
+    // Verify 10-round solo game finishes strictly at Round 10
+    const solo10 = createInitialGame('Solo 10-Round Sprint', 'scenario_mesopotamia', [
+      { name: 'Solo Sovereign', isAI: false },
+    ], { isSolitaire: true, scenarioId: 'mesopotamia', maxRounds: 10 });
+    checkSoloEnd(solo10, 10);
+
     // Verify a single-player-so-far multiplayer lobby room remains non-solitaire so others can join
     const openMultiplayer = createInitialGame('Open Valley Room', 'river_valley', [
       { name: 'Host', isAI: false },
@@ -1550,7 +1614,7 @@ export function testSolitaireScenarioRules(): TestResult {
       throw new Error('Multiplayer map with 1 initial player should remain joinable (isSolitaire=false)');
     }
 
-    details.push(`Verified all ${SOLITAIRE_SCENARIOS.length} pre-made solo scenarios & reconnectSoloPlayer strictly enforce 1 human player`);
+    details.push(`Verified all ${SOLITAIRE_SCENARIOS.length} pre-made solo scenarios, 20-round/10-round solo limits, & reconnectSoloPlayer strictly enforce rules`);
 
     // Verify all 4 Scenario Map Sets and all 33 non-duplicate scenarios have valid maps, author/publisher attributions, and unique names
     if (SCENARIO_MAP_SETS.length !== 4) {
@@ -2099,16 +2163,26 @@ function testRiverDividedTileRules(): TestResult {
       details.push('✓ Rule 4a: Blocked paving road on opposite-bank border across unbridged river');
     }
 
-    // Build a Bridge across separatingEdge between Side 0 and Side 1 (via neighbor across river)
-    const bridgeFromSide0 = canBuildRoad(state, p1.id, splitHex.id, splitSideNeighborId, 'boards', donkeyA.id);
-    if (!bridgeFromSide0.valid || !bridgeFromSide0.isBridge) {
-      throw new Error(`Expected legal bridge build from Side ${side0.side} to ${splitSideNeighborId}: ${bridgeFromSide0.reason}`);
+    // Build a Bridge (1 Stone) across separatingEdge between Side 0 and Side 1 (via neighbor across river)
+    const illegalBoardsSplitBridge = canBuildRoad(state, p1.id, splitHex.id, splitSideNeighborId, 'boards', donkeyA.id, {
+      buildType: 'bridge',
+    });
+    if (illegalBoardsSplitBridge.valid) {
+      throw new Error('Bridge must strictly reject Boards (costs 1 Stone)');
     }
-    const bridgeBuiltOk = executeBuildRoad(state, p1.id, splitHex.id, splitSideNeighborId, 'boards', donkeyA.id);
+    const bridgeFromSide0 = canBuildRoad(state, p1.id, splitHex.id, splitSideNeighborId, 'stone', donkeyA.id, {
+      buildType: 'bridge',
+    });
+    if (!bridgeFromSide0.valid || !bridgeFromSide0.isBridge || bridgeFromSide0.cost !== 1) {
+      throw new Error(`Expected legal 1-Stone bridge build from Side ${side0.side} to ${splitSideNeighborId}: ${bridgeFromSide0.reason}`);
+    }
+    const bridgeBuiltOk = executeBuildRoad(state, p1.id, splitHex.id, splitSideNeighborId, 'stone', donkeyA.id, {
+      buildType: 'bridge',
+    });
     if (!bridgeBuiltOk || state.edges[separatingEdgeId].improvement !== 'bridge') {
       throw new Error('Failed to build bridge connecting riverbanks');
     }
-    details.push('✓ Rule 4b: Built Bridge (2 Boards) connecting split banks along the river');
+    details.push('✓ Rule 4b: Built Bridge (1 Stone) connecting split banks along the river');
 
     // In MOVEMENT phase, Donkey B on Side 1 can now cross internally onto Side 0 via the bridge & collect Side 0 boards!
     state.phase = 'MOVEMENT';
@@ -2182,13 +2256,13 @@ function testRiverDividedTileRules(): TestResult {
       throw new Error('Expected SE banks of NWW and WW to touch the new riverbank road');
     }
 
-    // Bridge (2 Boards) can still be constructed on the same river border if needed later
-    addGoodOnSide(meso, '0,-1', nwwSeSide, 'boards', 2);
-    const bridgeAfterRoadCheck = canBuildRoad(meso, mesoP1.id, '0,-1', '-1,0', 'boards', mesoDonkey.id, {
+    // Bridge (1 Stone) can still be constructed on the same river border if needed later
+    addGoodOnSide(meso, '0,-1', nwwSeSide, 'stone', 1);
+    const bridgeAfterRoadCheck = canBuildRoad(meso, mesoP1.id, '0,-1', '-1,0', 'stone', mesoDonkey.id, {
       buildType: 'bridge',
     });
     if (!bridgeAfterRoadCheck.valid || !bridgeAfterRoadCheck.isBridge) {
-      throw new Error(`Expected Bridge (2 Boards) to remain buildable after paving a riverbank road: ${bridgeAfterRoadCheck.reason}`);
+      throw new Error(`Expected Bridge (1 Stone) to remain buildable after paving a riverbank road: ${bridgeAfterRoadCheck.reason}`);
     }
 
     // Production refreshes Donkey on SE riverbank road to roadSpeed = 2, and a Wagon (roadOnly) can drive WW <-> NWW <-> NEW!
@@ -2693,6 +2767,370 @@ export function testLoadedCargoBuildAndProduction(): TestResult {
 }
 
 /**
+ * TEST 16: Solo Game Bookmarks — Exact State Save, Restore, Branching, Undo & Solo-Only Guard
+ */
+function testSoloBookmarksExactState(): TestResult {
+  const start = performance.now();
+  const details: string[] = [];
+
+  try {
+    // 1. Verify non-solo games reject bookmark operations
+    const multiGame = createInitialGame('Multi Match', 'river_valley', [
+      { name: 'Alice', isAI: false },
+      { name: 'Bob', isAI: false },
+    ]);
+    const multiRes = createSoloBookmark(multiGame, { name: 'Not allowed' });
+    if (multiRes.success) {
+      throw new Error('Expected createSoloBookmark to be rejected on multiplayer game');
+    }
+    details.push('✓ Verified bookmarks are strictly restricted to solo games');
+
+    // 2. Create a solo game and build up rich mid-game state
+    const solo = createInitialGame(
+      'Bookmark Test Solo',
+      'scenario_small_world_s42',
+      [{ name: 'Solo Sovereign', isAI: false }],
+      { isSolitaire: true, scenarioId: 'small_world_s42', maxRounds: 10 }
+    );
+    const p1 = solo.players[0];
+    const homeHex = solo.hexes[p1.homeHexId];
+    const donkeys = Object.values(solo.transporters).filter(t => t.ownerId === p1.id);
+    const d1 = donkeys[0];
+    const d2 = donkeys[1];
+
+    // Advance from PRODUCTION to MOVEMENT
+    advancePhase(solo);
+    if (solo.phase !== 'MOVEMENT') {
+      throw new Error(`Expected MOVEMENT phase, got ${solo.phase}`);
+    }
+
+    // Pick up boards on d1, move d1 to an adjacent unimproved non-water hex
+    if (!executePickupGoods(solo, d1.id, 'boards', 2, p1.id)) {
+      throw new Error('Failed to pick up boards on donkey 1');
+    }
+    const neighborHex = Object.values(solo.edges)
+      .filter(
+        e =>
+          !e.isRiver &&
+          e.improvement === 'none' &&
+          !e.isRailroad &&
+          (e.hexA === p1.homeHexId || e.hexB === p1.homeHexId)
+      )
+      .map(e => (e.hexA === p1.homeHexId ? e.hexB : e.hexA))
+      .map(id => solo.hexes[id])
+      .find(h => h && h.terrain !== 'water' && canMoveTransporter(solo, d1.id, h.id, p1.id).valid);
+    if (!neighborHex) {
+      throw new Error('Could not find unimproved dry land neighbor for solo bookmark test');
+    }
+    if (!executeMoveTransporter(solo, d1.id, neighborHex.id, p1.id)) {
+      throw new Error('Failed to move donkey 1 to neighbor hex');
+    }
+
+    // Also advance to BUILDING, build a road using d2 at home, unlock a tech
+    advancePhase(solo); // -> BUILDING
+    const roadCheck = canBuildRoad(solo, p1.id, p1.homeHexId, neighborHex.id, 'stone', d2.id);
+    if (!roadCheck.valid || !executeBuildRoad(solo, p1.id, p1.homeHexId, neighborHex.id, 'stone', d2.id)) {
+      throw new Error(`Failed to build road before bookmark: ${roadCheck.reason || 'unknown'}`);
+    }
+    p1.unlockedTechs = ['mines_specialized'];
+    homeHex.goods.coin = 1;
+    d2.cargo.gold = 2;
+    calculateScores(solo);
+
+    // Capture baseline exact state before bookmarking
+    const captureComparable = (s: GameState) =>
+      JSON.stringify({
+        round: s.round,
+        maxRounds: s.maxRounds,
+        phase: s.phase,
+        status: s.status,
+        winnerId: s.winnerId,
+        activePlayerId: s.activePlayerId,
+        neutralBricksUsed: s.neutralBricksUsed,
+        wonderBricksThisRoundByPlayer: s.wonderBricksThisRoundByPlayer,
+        players: s.players,
+        hexes: s.hexes,
+        edges: s.edges,
+        transporters: s.transporters,
+        wonder: s.wonder,
+      });
+
+    const expectedSnapshotComparable = captureComparable(solo);
+
+    // 3. Save default (unnamed) bookmark to verify it includes the map name, then save named bookmark
+    const defaultBmRes = createSoloBookmark(solo);
+    if (!defaultBmRes.success || !defaultBmRes.bookmark) {
+      throw new Error(`Failed to create default solo bookmark: ${defaultBmRes.reason}`);
+    }
+    const expectedMapName = MAP_PRESETS[solo.mapName]?.name || solo.mapName;
+    if (!defaultBmRes.bookmark.name.includes(expectedMapName)) {
+      throw new Error(
+        `Expected default bookmark name "${defaultBmRes.bookmark.name}" to include map name "${expectedMapName}"`
+      );
+    }
+    deleteSoloBookmark(solo, defaultBmRes.bookmark.id);
+    details.push(`✓ Verified default bookmark name includes map name: "${defaultBmRes.bookmark.name}"`);
+
+    const bm1Res = createSoloBookmark(solo, {
+      name: 'Before Sawmill Branch',
+      note: 'Testing road-first opening',
+    });
+    if (!bm1Res.success || !bm1Res.bookmark) {
+      throw new Error(`Failed to create solo bookmark: ${bm1Res.reason}`);
+    }
+    const bm1 = bm1Res.bookmark;
+    if (bm1.round !== 1 || bm1.phase !== 'BUILDING' || bm1.score !== p1.score) {
+      throw new Error('Bookmark metadata mismatch');
+    }
+    details.push(`✓ Saved bookmark "${bm1.name}" (R${bm1.round}/${bm1.maxRounds} · ${bm1.phase} · ${bm1.score} VP)`);
+
+    // 4. Heavily mutate state across multiple rounds all the way to COMPLETED
+    p1.unlockedTechs = ['mines_specialized', 'truck_factory'];
+    d1.cargo = { stock: 1 };
+    neighborHex.building = {
+      id: 'b_temp_factory',
+      type: 'sawmill',
+      ownerId: p1.id,
+      builtRound: solo.round,
+    };
+    const readPhase = (s: GameState) => s.phase;
+    let guard = 0;
+    while (readPhase(solo) !== 'COMPLETED' && guard < 60) {
+      advancePhase(solo);
+      guard++;
+    }
+    if (readPhase(solo) !== 'COMPLETED' || solo.status !== 'finished') {
+      throw new Error(`Expected solo game to finish before restoring bookmark, got phase=${readPhase(solo)}, status=${solo.status}`);
+    }
+    const finishedComparable = captureComparable(solo);
+    details.push(`✓ Advanced solo game all the way to COMPLETED (Round ${solo.round}/${solo.maxRounds})`);
+
+    // 5. Restore Bookmark #1 from COMPLETED game
+    const restoreRes = restoreSoloBookmark(solo, bm1.id);
+    if (!restoreRes.success) {
+      throw new Error(`Failed to restore bookmark: ${restoreRes.reason}`);
+    }
+    const afterRestoreComparable = captureComparable(solo);
+    if (afterRestoreComparable !== expectedSnapshotComparable) {
+      throw new Error('Restored state does not match bookmarked state byte-for-byte!');
+    }
+    if ((solo.bookmarks?.length || 0) !== 1) {
+      throw new Error('Restoring a bookmark must preserve saved bookmarks list');
+    }
+    details.push('✓ Restored exact state from COMPLETED game (all hexes, goods, roads, units, techs, wonder & score match)');
+
+    // 6. Verify Undo immediately reverses the restore back to COMPLETED
+    if (!undoMove(solo)) {
+      throw new Error('Expected Undo to be available after restoring a bookmark');
+    }
+    if (captureComparable(solo) !== finishedComparable) {
+      throw new Error('Undo after bookmark restore did not return to pre-restore state');
+    }
+    details.push('✓ Verified Undo safely reverses an accidental bookmark restore');
+
+    // 7. Restore the SAME bookmark a second time after branching to prove snapshot immutability
+    const restoreAgain = restoreSoloBookmark(solo, bm1.id);
+    if (!restoreAgain.success || captureComparable(solo) !== expectedSnapshotComparable) {
+      throw new Error('Second restore of the same bookmark failed to reproduce exact state');
+    }
+    details.push('✓ Verified same bookmark can be restored repeatedly with exact fidelity');
+
+    // 8. Verify rename + note update and delete
+    const renameRes = renameSoloBookmark(solo, bm1.id, 'Renamed Checkpoint', 'Updated note');
+    if (!renameRes.success || solo.bookmarks?.[0].name !== 'Renamed Checkpoint' || solo.bookmarks?.[0].note !== 'Updated note') {
+      throw new Error('Failed to rename solo bookmark');
+    }
+    const delRes = deleteSoloBookmark(solo, bm1.id);
+    if (!delRes.success || (solo.bookmarks?.length || 0) !== 0) {
+      throw new Error('Failed to delete solo bookmark');
+    }
+    details.push('✓ Verified bookmark rename, note edit, and delete');
+
+    return {
+      id: 'solo_bookmarks_exact_state',
+      category: 'Solo Checkpoints',
+      name: 'Solo Game Bookmarks (Exact State Save, Restore, Branching & Undo)',
+      passed: true,
+      durationMs: Math.round(performance.now() - start),
+      details,
+    };
+  } catch (err: any) {
+    return {
+      id: 'solo_bookmarks_exact_state',
+      category: 'Solo Checkpoints',
+      name: 'Solo Game Bookmarks (Exact State Save, Restore, Branching & Undo)',
+      passed: false,
+      durationMs: Math.round(performance.now() - start),
+      details,
+      error: err.message,
+    };
+  }
+}
+
+/**
+ * TEST 17: Private Per-Player Map Notes — Add, Edit, Move, Delete & Strict Privacy Isolation
+ */
+function testPrivateMapNotesCrudAndPrivacy(): TestResult {
+  const start = performance.now();
+  const details: string[] = [];
+
+  try {
+    const db: MapNotesDatabase = {};
+
+    // 1. Multiplayer game with 2 seated human players (distinct clientIds)
+    const multi = createInitialGame('Planning Match', 'river_valley', [
+      { name: 'Alice', isAI: false, clientId: 'client_alice' },
+      { name: 'Bob', isAI: false, clientId: 'client_bob' },
+    ]);
+    const alice = multi.players[0];
+    const bob = multi.players[1];
+
+    // Alice adds a private planning note at arbitrary coordinates
+    const createAlice = createPlayerMapNote(
+      db,
+      multi,
+      { playerId: alice.id, clientId: 'client_alice' },
+      { x: 142.44, y: -88.76, text: 'Build Sawmill R3 here', color: 'emerald' }
+    );
+    if (!createAlice.success || createAlice.notes.length !== 1) {
+      throw new Error('Failed to create private map note for Alice');
+    }
+    const aliceNoteId = createAlice.note.id;
+    details.push(`✓ Alice created private note at (${createAlice.note.x}, ${createAlice.note.y})`);
+
+    // Bob adds his own note
+    const createBob = createPlayerMapNote(
+      db,
+      multi,
+      { playerId: bob.id, clientId: 'client_bob' },
+      { x: -30, y: 210, text: 'Bridge north river', color: 'sky' }
+    );
+    if (!createBob.success || createBob.notes.length !== 1) {
+      throw new Error('Failed to create private map note for Bob');
+    }
+
+    // 2. Verify strict isolation: Bob only sees Bob's notes, Alice only sees Alice's notes
+    const aliceList = listPlayerMapNotes(db, multi, { playerId: alice.id, clientId: 'client_alice' });
+    const bobList = listPlayerMapNotes(db, multi, { playerId: bob.id, clientId: 'client_bob' });
+    if (!aliceList.success || aliceList.notes.length !== 1 || aliceList.notes[0].id !== aliceNoteId) {
+      throw new Error('Alice did not see strictly her own note');
+    }
+    if (!bobList.success || bobList.notes.length !== 1 || bobList.notes[0].id === aliceNoteId) {
+      throw new Error('Bob leaked or missed private notes');
+    }
+
+    // 3. Verify Bob cannot read, edit, or delete Alice's note even if spoofing Alice's playerId
+    const spoofRead = listPlayerMapNotes(db, multi, { playerId: alice.id, clientId: 'client_bob' });
+    if (spoofRead.success) {
+      throw new Error('Security failure: Bob with mismatched clientId was able to read Alice notes');
+    }
+    const spoofEdit = updatePlayerMapNote(
+      db,
+      multi,
+      { playerId: alice.id, clientId: 'client_bob' },
+      aliceNoteId,
+      { text: 'Hacked' }
+    );
+    if (spoofEdit.success) {
+      throw new Error('Security failure: Bob was able to edit Alice note');
+    }
+    const spoofDelete = deletePlayerMapNote(
+      db,
+      multi,
+      { playerId: alice.id, clientId: 'client_bob' },
+      aliceNoteId
+    );
+    if (spoofDelete.success) {
+      throw new Error('Security failure: Bob was able to delete Alice note');
+    }
+
+    // 4. Verify observers (no playerId) cannot view notes
+    const observerRead = listPlayerMapNotes(db, multi, { clientId: 'observer_xyz' });
+    if (observerRead.success) {
+      throw new Error('Security failure: Observer was able to read private player notes');
+    }
+    details.push('✓ Verified strict privacy isolation (hidden from other players & observers)');
+
+    // 5. Verify Alice can edit text, color, and drag-move position, then delete
+    const editRes = updatePlayerMapNote(
+      db,
+      multi,
+      { playerId: alice.id, clientId: 'client_alice' },
+      aliceNoteId,
+      { text: 'Build Brickworks R4', color: 'rose', x: 205.5, y: 12.25 }
+    );
+    if (
+      !editRes.success ||
+      editRes.note.text !== 'Build Brickworks R4' ||
+      editRes.note.color !== 'rose' ||
+      editRes.note.x !== 205.5
+    ) {
+      throw new Error('Failed to update Alice map note text/color/position');
+    }
+
+    const delRes = deletePlayerMapNote(
+      db,
+      multi,
+      { playerId: alice.id, clientId: 'client_alice' },
+      aliceNoteId
+    );
+    if (!delRes.success || delRes.notes.length !== 0) {
+      throw new Error('Failed to delete Alice map note');
+    }
+    details.push('✓ Verified editing text/color/coordinates and deleting private notes');
+
+    // 6. Verify solo games also support persistent notes across game actions & cleanup on game delete
+    const solo = createInitialGame(
+      'Solo Notes Test',
+      'scenario_mesopotamia',
+      [{ name: 'Solo Sovereign', isAI: false, clientId: 'client_solo' }],
+      { isSolitaire: true, scenarioId: 'mesopotamia', maxRounds: 20 }
+    );
+    const soloNote = createPlayerMapNote(
+      db,
+      solo,
+      { playerId: solo.players[0].id, clientId: 'client_solo' },
+      { x: 0, y: 0, text: 'Route stone across bridge', color: 'amber' }
+    );
+    if (!soloNote.success || soloNote.notes.length !== 1) {
+      throw new Error('Failed to create map note in solo game');
+    }
+    // Confirm notes are completely absent from serialized shared GameState
+    if (JSON.stringify(solo).includes('Route stone across bridge')) {
+      throw new Error('Private map note leaked into shared GameState!');
+    }
+    deleteAllMapNotesForGame(db, solo.id);
+    const afterCleanup = listPlayerMapNotes(db, solo, {
+      playerId: solo.players[0].id,
+      clientId: 'client_solo',
+    });
+    if (!afterCleanup.success || afterCleanup.notes.length !== 0) {
+      throw new Error('Expected game removal cleanup to delete game map notes');
+    }
+    details.push('✓ Verified solo support, zero leakage into GameState, and game-deletion cleanup');
+
+    return {
+      id: 'private_map_notes_crud_and_privacy',
+      category: 'Planning & Privacy',
+      name: 'Private Per-Player Map Notes (Add, Edit, Move, Delete & Isolation)',
+      passed: true,
+      durationMs: Math.round(performance.now() - start),
+      details,
+    };
+  } catch (err: any) {
+    return {
+      id: 'private_map_notes_crud_and_privacy',
+      category: 'Planning & Privacy',
+      name: 'Private Per-Player Map Notes (Add, Edit, Move, Delete & Isolation)',
+      passed: false,
+      durationMs: Math.round(performance.now() - start),
+      details,
+      error: err.message,
+    };
+  }
+}
+
+/**
  * Run the entire test suite and return aggregate metrics
  */
 export function runAllGameSimulations(): SimulationSuiteResult {
@@ -2713,6 +3151,8 @@ export function runAllGameSimulations(): SimulationSuiteResult {
     testStockBeginnerBotEndToEnd(),
     testRiverDividedTileRules(),
     testLoadedCargoBuildAndProduction(),
+    testSoloBookmarksExactState(),
+    testPrivateMapNotesCrudAndPrivacy(),
   ];
 
   const passed = tests.filter(t => t.passed).length;

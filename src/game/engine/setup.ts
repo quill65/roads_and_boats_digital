@@ -315,9 +315,10 @@ export function createInitialGame(
 
   const wonder: WonderTier[] = JSON.parse(JSON.stringify(INITIAL_WONDER_TIERS));
 
-  let initialNeutralBricksUsed = 0;
+  const initialNeutralBricksUsed = 0;
   if (isSolitaire) {
-    // Official Solo Rule: Pre-fill the first 4 rows (16 slots = Tier 0 Foundation) with Neutral bricks
+    // Official Solo Rule: Pre-fill the first 4 rows (16 slots = Tier 0 Foundation) with Neutral bricks.
+    // These setup Foundation bricks do NOT consume the 33-turn neutral brick game limit.
     const soloPrebuiltCount = ROADS_AND_BOATS_RULES.driveRuleset.wonder.rows
       .slice(0, ROADS_AND_BOATS_RULES.wonderRules.soloPrebuiltRows)
       .reduce((sum, r) => sum + r.capacity, 0);
@@ -332,7 +333,6 @@ export function createInitialGame(
         points: 0,
         round: 0,
       });
-      initialNeutralBricksUsed += 1;
     }
   }
 
@@ -371,6 +371,7 @@ export function createInitialGame(
     logs: initialLogs,
     history: [],
     redoStack: [],
+    bookmarks: [],
     isSolitaire,
     scenarioId: options?.scenarioId || (isSolitaireMap(mapId) ? mapId.replace(/^scenario_/, '') : undefined),
     creatorClientId: options?.creatorClientId || players[0]?.clientId,

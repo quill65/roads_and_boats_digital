@@ -359,7 +359,7 @@ export const PlayerAidModal: React.FC<PlayerAidModalProps> = ({ onClose }) => {
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-400 pt-1">
-                    Boards build all bridges (2 Boards), workshops, and boats. Land Roads strictly require 1 Stone!
+                    Boards build factories, workshops, wagons, and boats. Land Roads and River Bridges strictly require 1 Stone!
                   </p>
                 </div>
 
@@ -567,7 +567,7 @@ export const PlayerAidModal: React.FC<PlayerAidModalProps> = ({ onClose }) => {
                       <span>Phase 3: Building & Construction</span>
                     </div>
                     <p className="text-slate-300 pl-7">
-                      Transporters at sites build Land Roads (strictly 1 Stone), River Bridges (strictly 2 Boards), factories, workshops, or conduct Research (2 Geese + 1 Paper).
+                      Transporters at sites build Land Roads (strictly 1 Stone), River Bridges (strictly 1 Stone), factories, workshops, or conduct Research (2 Geese + 1 Paper).
                     </p>
                   </div>
 
@@ -597,7 +597,7 @@ export const PlayerAidModal: React.FC<PlayerAidModalProps> = ({ onClose }) => {
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-amber-400 font-bold">•</span>
-                    <span><strong>Road vs. Bridge Materials:</strong> Land Roads strictly cost 1 Stone. River Bridges strictly cost 2 Boards.</span>
+                    <span><strong>Road &amp; Bridge Materials:</strong> Land Roads and River Bridges both strictly cost 1 Stone (Boards cannot build roads or bridges).</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-amber-400 font-bold">•</span>

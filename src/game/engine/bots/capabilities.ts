@@ -29,6 +29,7 @@ import {
 import { canDropGoods, canPickupGoods, executeDropGoods, executePickupGoods, executeMoveTransporter, getTransporterCargoWeight } from '../movement';
 import {
   areAdjacentToWater,
+  BuildRoadOptions,
   canBuildFactory,
   canBuildRaft,
   canBuildRoad,
@@ -692,9 +693,10 @@ export function botBuildRoad(
   hexA: string,
   hexB: string,
   material: 'boards' | 'stone',
-  transporterId: string
+  transporterId: string,
+  options?: BuildRoadOptions
 ): boolean {
-  const check = canBuildRoad(state, bot.id, hexA, hexB, material, transporterId);
+  const check = canBuildRoad(state, bot.id, hexA, hexB, material, transporterId, options);
   if (!check.valid || !check.cost) return false;
 
   const transporter = state.transporters[transporterId];
@@ -772,7 +774,7 @@ export function botBuildRoad(
     return false;
   }
 
-  if (!executeBuildRoad(state, bot.id, hexA, hexB, material, transporterId)) {
+  if (!executeBuildRoad(state, bot.id, hexA, hexB, material, transporterId, options)) {
     return false;
   }
 

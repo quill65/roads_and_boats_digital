@@ -219,7 +219,7 @@ export const BuildMenuModal: React.FC<BuildMenuModalProps> = ({
                   </div>
                   <div className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800">
                     <p className="font-semibold text-slate-200">River Bridge Cost</p>
-                    <p className="text-slate-400 mt-1">2 Boards strictly across a river (connects opposite banks)</p>
+                    <p className="text-slate-400 mt-1">1 Stone strictly across a river (connects opposite banks)</p>
                   </div>
                 </div>
               </div>
