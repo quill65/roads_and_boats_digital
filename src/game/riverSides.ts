@@ -6,7 +6,7 @@
  * and computes UI visual offsets away from unbridged rivers and water barriers.
  */
 
-import { GameState, GoodType, HexOrientation, HexTile, Transporter } from './types';
+import { GameState, GoodType, HexEdge, HexOrientation, HexTile, RiverBankRoad, Transporter } from './types';
 import { getEdgeKey, HEX_DIRECTIONS, hexToPixel, parseHexKey } from './hexMath';
 
 export interface NeighborExitInfo {
@@ -234,8 +234,17 @@ export function getBestAccessibleSide(
       }
     }
     for (const rEdgeId of region.flankingRiverEdgeIds) {
-      if (state.edges[rEdgeId]?.improvement === 'bridge') {
+      const rEdge = state.edges[rEdgeId];
+      if (!rEdge) continue;
+      if (rEdge.improvement === 'bridge' || rEdge.isRailroad) {
         score += 10;
+      }
+      if (
+        rEdge.riverBankRoads?.some(
+          r => (rEdge.hexA === hexId ? r.hexASide : r.hexBSide) === region.side
+        )
+      ) {
+        score += 30;
       }
     }
 
@@ -523,7 +532,89 @@ export function isSideAdjacentToWater(
 }
 
 /**
- * Checks whether any road, bridge, or railroad touches `(hexId, side)` (or bridged sides).
+ * Returns the canonical matching bank-side pairs `(hexASide, hexBSide)` alongside a river edge.
+ */
+export function getRiverEdgeBankPairs(
+  state: Pick<GameState, 'hexes' | 'edges' | 'hexOrientation'>,
+  edge: HexEdge
+): Array<{ hexASide: number; hexBSide: number }> {
+  if (!edge.isRiver) return [];
+  const layoutA = getHexSideLayout(state, edge.hexA);
+  const layoutB = getHexSideLayout(state, edge.hexB);
+
+  const exitIdxA = layoutA.riverExits.findIndex(r => r.edgeId === edge.id);
+  const exitIdxB = layoutB.riverExits.findIndex(r => r.edgeId === edge.id);
+  const kA = layoutA.sides.length;
+  const kB = layoutB.sides.length;
+
+  const rightA = layoutA.isSplit && exitIdxA >= 0 ? exitIdxA % kA : 0;
+  const leftA = layoutA.isSplit && exitIdxA >= 0 ? (exitIdxA - 1 + kA) % kA : 0;
+  const rightB = layoutB.isSplit && exitIdxB >= 0 ? exitIdxB % kB : 0;
+  const leftB = layoutB.isSplit && exitIdxB >= 0 ? (exitIdxB - 1 + kB) % kB : 0;
+
+  // Left of A->B equals Right of B->A, and Right of A->B equals Left of B->A.
+  const rawPairs: Array<{ hexASide: number; hexBSide: number }> = [
+    { hexASide: leftA, hexBSide: rightB },
+    { hexASide: rightA, hexBSide: leftB },
+  ];
+
+  const deduped: Array<{ hexASide: number; hexBSide: number }> = [];
+  for (const pair of rawPairs) {
+    if (!deduped.some(p => p.hexASide === pair.hexASide && p.hexBSide === pair.hexBSide)) {
+      deduped.push(pair);
+    }
+  }
+  return deduped;
+}
+
+export function edgeHasBankRoadPair(
+  edge: Pick<HexEdge, 'riverBankRoads'>,
+  pair: Pick<RiverBankRoad, 'hexASide' | 'hexBSide'>
+): boolean {
+  return Boolean(
+    edge.riverBankRoads?.some(
+      r => r.hexASide === pair.hexASide && r.hexBSide === pair.hexBSide
+    )
+  );
+}
+
+/**
+ * Given a river edge and a transporter on `(fromHexId, fromSide)` (or bridged sides),
+ * returns all destination sides on the neighbor hex reachable via paved riverbank roads on `edge`.
+ */
+export function getRiverEdgeRoadTargets(
+  state: Pick<GameState, 'hexes' | 'edges' | 'hexOrientation'>,
+  edge: HexEdge | undefined,
+  fromHexId: string,
+  fromSide: number
+): number[] {
+  if (!edge || !edge.isRiver || !edge.riverBankRoads || edge.riverBankRoads.length === 0) {
+    return [];
+  }
+  const toHexId = edge.hexA === fromHexId ? edge.hexB : edge.hexA;
+  const accessibleFrom = getAccessibleSidesOnHex(state, fromHexId, fromSide);
+  const targets: number[] = [];
+
+  for (const road of edge.riverBankRoads) {
+    const sFrom = normalizeSideForHex(
+      state,
+      fromHexId,
+      fromHexId === edge.hexA ? road.hexASide : road.hexBSide
+    );
+    const sTo = normalizeSideForHex(
+      state,
+      toHexId,
+      fromHexId === edge.hexA ? road.hexBSide : road.hexASide
+    );
+    if (accessibleFrom.has(sFrom) && !targets.includes(sTo)) {
+      targets.push(sTo);
+    }
+  }
+  return targets;
+}
+
+/**
+ * Checks whether any road, bridge, riverbank road, or railroad touches `(hexId, side)` (or bridged sides).
  */
 export function doesSideTouchRoad(
   state: Pick<GameState, 'hexes' | 'edges' | 'hexOrientation'>,
@@ -546,7 +637,15 @@ export function doesSideTouchRoad(
     }
     for (const rEdgeId of region.flankingRiverEdgeIds) {
       const edge = state.edges[rEdgeId];
-      if (edge && (edge.improvement === 'bridge' || edge.isRailroad)) {
+      if (!edge) continue;
+      if (edge.improvement === 'bridge' || edge.isRailroad) {
+        return true;
+      }
+      if (
+        edge.riverBankRoads?.some(
+          r => normalizeSideForHex(state, hexId, edge.hexA === hexId ? r.hexASide : r.hexBSide) === s
+        )
+      ) {
         return true;
       }
     }
@@ -880,5 +979,377 @@ export function getWatercraftVisualOffset(
   return {
     dx: baseDx + Math.cos(spreadAngle) * spreadR,
     dy: baseDy + Math.sin(spreadAngle) * spreadR,
+  };
+}
+
+// ============================================================================
+// Road & Bridge SVG Geometry (Zero Water-Barrier Crossings & Short River Bridges)
+// ============================================================================
+
+export interface Point2D {
+  x: number;
+  y: number;
+}
+
+/**
+ * Converts a polyline into a smooth SVG path with small corner fillets (`cornerRadius`)
+ * so roads bend cleanly through junctions without cutting across nearby river curves.
+ */
+export function buildRoundedPolylinePath(points: Point2D[], cornerRadius: number = 5): string {
+  if (points.length === 0) return '';
+  if (points.length === 1) return `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+  if (points.length === 2) {
+    return `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)} L ${points[1].x.toFixed(2)} ${points[1].y.toFixed(2)}`;
+  }
+
+  let d = `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const next = points[i + 1];
+
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const len1 = Math.hypot(v1x, v1y);
+
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    const len2 = Math.hypot(v2x, v2y);
+
+    if (len1 < 1e-3 || len2 < 1e-3) {
+      d += ` L ${curr.x.toFixed(2)} ${curr.y.toFixed(2)}`;
+      continue;
+    }
+
+    const r = Math.min(cornerRadius, len1 * 0.35, len2 * 0.35);
+    const pInX = curr.x - (v1x / len1) * r;
+    const pInY = curr.y - (v1y / len1) * r;
+    const pOutX = curr.x + (v2x / len2) * r;
+    const pOutY = curr.y + (v2y / len2) * r;
+
+    d += ` L ${pInX.toFixed(2)} ${pInY.toFixed(2)} Q ${curr.x.toFixed(2)} ${curr.y.toFixed(2)} ${pOutX.toFixed(2)} ${pOutY.toFixed(2)}`;
+  }
+
+  const last = points[points.length - 1];
+  d += ` L ${last.x.toFixed(2)} ${last.y.toFixed(2)}`;
+  return d;
+}
+
+/**
+ * Returns the dry-land road junction point inside `(hexId, side)` guaranteed to stay clear
+ * of all river curves, river sources, and confluences inside the tile.
+ */
+export function getRoadHubPoint(
+  state: Pick<GameState, 'hexes' | 'edges' | 'hexOrientation'>,
+  hexId: string,
+  side: number,
+  hexRadius: number
+): Point2D {
+  const hex = state.hexes[hexId];
+  const coord = hex ? { q: hex.q, r: hex.r } : parseHexKey(hexId);
+  const orientation: HexOrientation = state.hexOrientation || 'pointy';
+  const center = hexToPixel(coord.q, coord.r, hexRadius, orientation);
+  const layout = getHexSideLayout(state, hexId);
+
+  if (layout.riverExits.length === 0) {
+    return center;
+  }
+
+  if (!layout.isSplit) {
+    // 1-exit river source: place road hub inland opposite the river exit so roads never cross the river source
+    const oppAngle = normalizeAngle(layout.riverExits[0].angle + Math.PI);
+    const dist = hexRadius * 0.3;
+    return {
+      x: center.x + Math.cos(oppAngle) * dist,
+      y: center.y + Math.sin(oppAngle) * dist,
+    };
+  }
+
+  const normSide = normalizeSideForHex(state, hexId, side);
+  const region = layout.sides[normSide] || layout.sides[0];
+  const hexApothem = hexRadius * (Math.sqrt(3) / 2);
+
+  let hubDist = hexRadius * 0.4;
+  if (layout.riverExits.length === 2) {
+    if (region.span < Math.PI - 1e-3) {
+      // Quadratic river curve bows into this sector up to 0.5 * apothem * cos(span / 2)
+      const riverApex = 0.5 * hexApothem * Math.cos(region.span / 2);
+      hubDist = Math.max(hexRadius * 0.48, riverApex + hexRadius * 0.22);
+    } else {
+      hubDist = hexRadius * 0.4;
+    }
+  } else {
+    // 3+ exit confluence: straight river rays from center; ensure >= 0.24*R perpendicular clearance
+    if (region.span <= Math.PI * 0.45) {
+      hubDist = hexRadius * 0.56;
+    } else if (region.span < Math.PI - 1e-3) {
+      hubDist = hexRadius * 0.44;
+    } else {
+      hubDist = hexRadius * 0.4;
+    }
+  }
+
+  return {
+    x: center.x + Math.cos(region.bisectorAngle) * hubDist,
+    y: center.y + Math.sin(region.bisectorAngle) * hubDist,
+  };
+}
+
+/**
+ * Returns the unit normal perpendicular to a river edge (`hexA -> hexB`) pointing onto
+ * the side corresponding to `(hexASide, hexBSide)`.
+ */
+export function getRiverBankNormal(
+  state: Pick<GameState, 'hexes' | 'edges' | 'hexOrientation'>,
+  edge: HexEdge,
+  hexASide: number,
+  hexBSide: number,
+  hexRadius: number,
+  fallbackIndex: number = 0
+): Point2D {
+  const orientation: HexOrientation = state.hexOrientation || 'pointy';
+  const coordA = parseHexKey(edge.hexA);
+  const coordB = parseHexKey(edge.hexB);
+  const centerA = hexToPixel(coordA.q, coordA.r, hexRadius, orientation);
+  const centerB = hexToPixel(coordB.q, coordB.r, hexRadius, orientation);
+
+  const dx = centerB.x - centerA.x;
+  const dy = centerB.y - centerA.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  // In SVG coords (+x right, +y down), increasing angle around A puts sector on (-uy, ux)
+  const rightNormal = { x: -uy, y: ux };
+  const leftNormal = { x: uy, y: -ux };
+
+  const layoutA = getHexSideLayout(state, edge.hexA);
+  if (layoutA.isSplit) {
+    const exitIdxA = layoutA.riverExits.findIndex(r => r.edgeId === edge.id);
+    const kA = layoutA.sides.length;
+    if (exitIdxA >= 0 && kA > 0) {
+      const rightBankA = exitIdxA % kA;
+      const leftBankA = (exitIdxA - 1 + kA) % kA;
+      if (hexASide === rightBankA) return rightNormal;
+      if (hexASide === leftBankA) return leftNormal;
+    }
+  }
+
+  const layoutB = getHexSideLayout(state, edge.hexB);
+  if (layoutB.isSplit) {
+    const exitIdxB = layoutB.riverExits.findIndex(r => r.edgeId === edge.id);
+    const kB = layoutB.sides.length;
+    if (exitIdxB >= 0 && kB > 0) {
+      const rightBankB = exitIdxB % kB;
+      const leftBankB = (exitIdxB - 1 + kB) % kB;
+      if (hexBSide === rightBankB) return leftNormal;
+      if (hexBSide === leftBankB) return rightNormal;
+    }
+  }
+
+  return fallbackIndex % 2 === 0 ? rightNormal : leftNormal;
+}
+
+/**
+ * Computes river-safe polyline & SVG path for a dry-border Land Road (`!edge.isRiver`).
+ * Connects each tile's facing dry bank hub cleanly across the shared border midpoint
+ * without ever crossing any river inside either tile.
+ */
+export function getDryRoadGeometry(
+  state: Pick<GameState, 'hexes' | 'edges' | 'hexOrientation'>,
+  edge: HexEdge,
+  hexRadius: number
+): {
+  points: Point2D[];
+  pathD: string;
+  start: Point2D;
+  end: Point2D;
+  midPoint: Point2D;
+} {
+  const orientation: HexOrientation = state.hexOrientation || 'pointy';
+  const coordA = parseHexKey(edge.hexA);
+  const coordB = parseHexKey(edge.hexB);
+  const centerA = hexToPixel(coordA.q, coordA.r, hexRadius, orientation);
+  const centerB = hexToPixel(coordB.q, coordB.r, hexRadius, orientation);
+  const midPoint = {
+    x: (centerA.x + centerB.x) / 2,
+    y: (centerA.y + centerB.y) / 2,
+  };
+
+  const sideA = getNeighborSideOnHex(state, edge.hexA, edge.hexB) ?? 0;
+  const sideB = getNeighborSideOnHex(state, edge.hexB, edge.hexA) ?? 0;
+  const start = getRoadHubPoint(state, edge.hexA, sideA, hexRadius);
+  const end = getRoadHubPoint(state, edge.hexB, sideB, hexRadius);
+
+  const layoutA = getHexSideLayout(state, edge.hexA);
+  const layoutB = getHexSideLayout(state, edge.hexB);
+  const points =
+    layoutA.riverExits.length === 0 && layoutB.riverExits.length === 0
+      ? [start, end]
+      : [start, midPoint, end];
+
+  return {
+    points,
+    pathD: buildRoundedPolylinePath(points, 5),
+    start,
+    end,
+    midPoint,
+  };
+}
+
+/**
+ * Computes river-safe polyline & SVG path for a Land Road built alongside a river (`edge.isRiver`).
+ * Stays strictly on the specified matching bank pair `(hexASide, hexBSide)` and never crosses water.
+ */
+export function getRiverBankRoadGeometry(
+  state: Pick<GameState, 'hexes' | 'edges' | 'hexOrientation'>,
+  edge: HexEdge,
+  bankPair: { hexASide: number; hexBSide: number },
+  hexRadius: number,
+  fallbackIndex: number = 0
+): {
+  points: Point2D[];
+  pathD: string;
+  start: Point2D;
+  end: Point2D;
+  edgeCrossPoint: Point2D;
+  badgePoint: Point2D;
+  normal: Point2D;
+} {
+  const orientation: HexOrientation = state.hexOrientation || 'pointy';
+  const coordA = parseHexKey(edge.hexA);
+  const coordB = parseHexKey(edge.hexB);
+  const centerA = hexToPixel(coordA.q, coordA.r, hexRadius, orientation);
+  const centerB = hexToPixel(coordB.q, coordB.r, hexRadius, orientation);
+  const midPoint = {
+    x: (centerA.x + centerB.x) / 2,
+    y: (centerA.y + centerB.y) / 2,
+  };
+
+  const dx = centerB.x - centerA.x;
+  const dy = centerB.y - centerA.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+
+  const normal = getRiverBankNormal(
+    state,
+    edge,
+    bankPair.hexASide,
+    bankPair.hexBSide,
+    hexRadius,
+    fallbackIndex
+  );
+
+  const bankOffset = hexRadius * 0.32; // ~19.2px at R=60: cleanly outside water & bridge ends
+  const inlandDist = hexRadius * 0.5;  // ~30px along exit vector from center
+  const badgeOffset = hexRadius * 0.375; // ~22.5px at R=60: clear of center bridge badge
+
+  const edgeCrossPoint = {
+    x: midPoint.x + normal.x * bankOffset,
+    y: midPoint.y + normal.y * bankOffset,
+  };
+  const badgePoint = {
+    x: midPoint.x + normal.x * badgeOffset,
+    y: midPoint.y + normal.y * badgeOffset,
+  };
+
+  const layoutA = getHexSideLayout(state, edge.hexA);
+  const layoutB = getHexSideLayout(state, edge.hexB);
+
+  const ptsA: Point2D[] = [];
+  if (layoutA.isSplit) {
+    const hubA = getRoadHubPoint(state, edge.hexA, bankPair.hexASide, hexRadius);
+    const wpA = {
+      x: centerA.x + ux * inlandDist + normal.x * bankOffset,
+      y: centerA.y + uy * inlandDist + normal.y * bankOffset,
+    };
+    ptsA.push(hubA);
+    if (Math.hypot(hubA.x - wpA.x, hubA.y - wpA.y) > 5) {
+      ptsA.push(wpA);
+    }
+  } else {
+    ptsA.push({
+      x: centerA.x + normal.x * bankOffset,
+      y: centerA.y + normal.y * bankOffset,
+    });
+  }
+
+  const ptsB: Point2D[] = [];
+  if (layoutB.isSplit) {
+    const hubB = getRoadHubPoint(state, edge.hexB, bankPair.hexBSide, hexRadius);
+    const wpB = {
+      x: centerB.x - ux * inlandDist + normal.x * bankOffset,
+      y: centerB.y - uy * inlandDist + normal.y * bankOffset,
+    };
+    if (Math.hypot(hubB.x - wpB.x, hubB.y - wpB.y) > 5) {
+      ptsB.push(wpB);
+    }
+    ptsB.push(hubB);
+  } else {
+    ptsB.push({
+      x: centerB.x + normal.x * bankOffset,
+      y: centerB.y + normal.y * bankOffset,
+    });
+  }
+
+  const points = [...ptsA, edgeCrossPoint, ...ptsB];
+  return {
+    points,
+    pathD: buildRoundedPolylinePath(points, 5),
+    start: points[0],
+    end: points[points.length - 1],
+    edgeCrossPoint,
+    badgePoint,
+    normal,
+  };
+}
+
+/**
+ * Computes geometry for a River Bridge spanning strictly perpendicular across the water
+ * at the river crossing midpoint, with a small landing margin on either bank.
+ */
+export function getRiverBridgeGeometry(
+  state: Pick<GameState, 'hexOrientation'>,
+  edge: Pick<HexEdge, 'hexA' | 'hexB'>,
+  hexRadius: number
+): {
+  start: Point2D;
+  end: Point2D;
+  midPoint: Point2D;
+  perp: Point2D;
+  riverDir: Point2D;
+  halfSpan: number;
+} {
+  const orientation: HexOrientation = state.hexOrientation || 'pointy';
+  const coordA = parseHexKey(edge.hexA);
+  const coordB = parseHexKey(edge.hexB);
+  const centerA = hexToPixel(coordA.q, coordA.r, hexRadius, orientation);
+  const centerB = hexToPixel(coordB.q, coordB.r, hexRadius, orientation);
+  const midPoint = {
+    x: (centerA.x + centerB.x) / 2,
+    y: (centerA.y + centerB.y) / 2,
+  };
+
+  const dx = centerB.x - centerA.x;
+  const dy = centerB.y - centerA.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const riverDir = { x: dx / len, y: dy / len };
+  const perp = { x: -riverDir.y, y: riverDir.x };
+  // Water stroke is 5.5px (±2.75px); halfSpan = 0.20 * R (~12px at R=60) spans water + ~9px on each bank
+  const halfSpan = hexRadius * 0.2;
+
+  return {
+    start: {
+      x: midPoint.x - perp.x * halfSpan,
+      y: midPoint.y - perp.y * halfSpan,
+    },
+    end: {
+      x: midPoint.x + perp.x * halfSpan,
+      y: midPoint.y + perp.y * halfSpan,
+    },
+    midPoint,
+    perp,
+    riverDir,
+    halfSpan,
   };
 }

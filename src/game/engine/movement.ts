@@ -17,6 +17,7 @@ import {
   getHexSideLayout,
   getInteractableSidesForTransporter,
   getNeighborSideOnHex,
+  getRiverEdgeRoadTargets,
   getTransporterSide,
   normalizeSideForHex,
   removeGoodOnSide,
@@ -146,6 +147,7 @@ export function canMoveTransporter(
 
   const fromSide = getTransporterSide(state, transporter);
   const isRiverEdge = Boolean(edge && edge.isRiver);
+  let isPavedStep = isPavedEdge;
 
   if (isRiverEdge) {
     if (!doesSideFlankRiverEdge(state, transporter.hexId, fromSide, edgeKey)) {
@@ -154,26 +156,50 @@ export function canMoveTransporter(
         reason: 'Blocked by an unbridged river dividing this tile! Pave a Bridge to reach that riverbank.',
       };
     }
-    if (spec.roadOnly && edge.improvement !== 'bridge') {
-      return { valid: false, reason: 'Cannot cross an unbridged river! Pave a Bridge first.' };
+
+    const hasBridgeOrRail = Boolean(edge && (edge.improvement === 'bridge' || edge.isRailroad));
+    const bankRoadTargets = getRiverEdgeRoadTargets(state, edge, transporter.hexId, fromSide);
+    isPavedStep = hasBridgeOrRail || bankRoadTargets.length > 0;
+
+    if (spec.roadOnly && !isPavedStep) {
+      return {
+        valid: false,
+        reason: 'Wagons and trucks require a paved Road along this riverbank or a Bridge!',
+      };
     }
     if (typeof targetSide === 'number') {
-      const entrySides = getValidEntrySidesFromNeighbor(
-        state,
-        transporter.hexId,
-        fromSide,
-        targetHexId
-      );
       const normTarget = normalizeSideForHex(state, targetHexId, targetSide);
       if (
-        !entrySides.some(entrySide =>
-          areSidesConnectedByBridgeOnHex(state, targetHexId, entrySide, normTarget)
-        )
+        !hasBridgeOrRail &&
+        (spec.roadOnly || (transporter.type === 'donkey' && transporter.movesLeft < transporter.maxMoves))
       ) {
-        return {
-          valid: false,
-          reason: 'Cannot cross an unbridged river to land on the opposite riverbank',
-        };
+        if (
+          !bankRoadTargets.some(bSide =>
+            areSidesConnectedByBridgeOnHex(state, targetHexId, bSide, normTarget)
+          )
+        ) {
+          return {
+            valid: false,
+            reason: 'No paved road reaches that opposite riverbank; build a Bridge or road on that bank',
+          };
+        }
+      } else {
+        const entrySides = getValidEntrySidesFromNeighbor(
+          state,
+          transporter.hexId,
+          fromSide,
+          targetHexId
+        );
+        if (
+          !entrySides.some(entrySide =>
+            areSidesConnectedByBridgeOnHex(state, targetHexId, entrySide, normTarget)
+          )
+        ) {
+          return {
+            valid: false,
+            reason: 'Cannot cross an unbridged river to land on the opposite riverbank',
+          };
+        }
       }
     }
   } else {
@@ -216,7 +242,7 @@ export function canMoveTransporter(
     }
   }
 
-  if (transporter.type === 'donkey' && !isPavedEdge) {
+  if (transporter.type === 'donkey' && !isPavedStep) {
     // Official Rule: A Donkey may move 1 space off-road OR 2 spaces strictly along roads per round.
     if (transporter.movesLeft < transporter.maxMoves) {
       return {
@@ -276,7 +302,16 @@ export function executeMoveTransporter(
     }
   } else {
     transporter.hexId = targetHexId;
-    const entrySides = getValidEntrySidesFromNeighbor(state, fromHex, fromSide, targetHexId);
+    const hasBridgeOrRail = Boolean(edge && (edge.improvement === 'bridge' || edge.isRailroad));
+    const bankRoadTargets =
+      edge && edge.isRiver && !hasBridgeOrRail
+        ? getRiverEdgeRoadTargets(state, edge, fromHex, fromSide)
+        : [];
+    const entrySides =
+      bankRoadTargets.length > 0 &&
+      (spec.roadOnly || (transporter.type === 'donkey' && (check.moveCost || 1) === 1))
+        ? bankRoadTargets
+        : getValidEntrySidesFromNeighbor(state, fromHex, fromSide, targetHexId);
     const defaultEntry = entrySides[0] ?? 0;
     const normTarget =
       typeof targetSide === 'number'

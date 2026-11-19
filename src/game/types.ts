@@ -88,6 +88,12 @@ export interface HexTile {
   building?: BuildingInstance | null;
 }
 
+export interface RiverBankRoad {
+  hexASide: number;
+  hexBSide: number;
+  ownerId?: string;
+}
+
 export interface HexEdge {
   id: string; // normalized "q1,r1|q2,r2"
   hexA: string;
@@ -95,6 +101,7 @@ export interface HexEdge {
   isRiver: boolean;
   isRailroad?: boolean;
   improvement: EdgeImprovement;
+  riverBankRoads?: RiverBankRoad[];
   ownerId?: string | null;
 }
 
@@ -197,14 +204,33 @@ export interface GameState {
   updatedAt: number;
 }
 
+export interface ResearchUpgradeSelection {
+  hexId: string;
+  mineSpecialization?: 'gold' | 'iron';
+}
+
 export type GameAction =
   | { type: 'MOVE_TRANSPORTER'; transporterId: string; targetHexId: string; targetSide?: number }
   | { type: 'PICKUP_GOODS'; transporterId: string; good: GoodType; amount: number; targetSide?: number }
   | { type: 'DROP_GOODS'; transporterId: string; good: GoodType; amount: number; targetSide?: number }
-  | { type: 'BUILD_ROAD'; hexA: string; hexB: string; material: 'boards' | 'stone'; transporterId: string }
+  | {
+      type: 'BUILD_ROAD';
+      hexA: string;
+      hexB: string;
+      material: 'boards' | 'stone';
+      transporterId: string;
+      buildType?: 'road' | 'bridge';
+      bankPair?: { hexASide: number; hexBSide: number };
+    }
   | { type: 'BUILD_FACTORY'; hexId: string; buildingType: BuildingType; transporterId: string }
   | { type: 'BUILD_WONDER'; transporterId: string; amount: number }
-  | { type: 'RESEARCH_TECH'; hexId: string; techId: string; transporterId?: string }
+  | {
+      type: 'RESEARCH_TECH';
+      hexId: string;
+      techId: string;
+      transporterId?: string;
+      upgrades?: ResearchUpgradeSelection[];
+    }
   | { type: 'REPLENISH_MINE'; hexId: string; transporterId?: string }
   | { type: 'CONVERT_FACTORY'; hexId: string; recipeId: string }
   | { type: 'RESIGN_GAME'; playerId?: string }

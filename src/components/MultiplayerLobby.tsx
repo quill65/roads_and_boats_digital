@@ -49,8 +49,7 @@ interface MultiplayerLobbyProps {
   onStartTutorial: () => void;
   onOpenPlayerAid: () => void;
   onOpenSolitaire?: () => void;
-  onOpenTestSuite?: () => void;
-  onOpenDriveRules?: () => void;
+  onOpenGameRules?: () => void;
 }
 
 export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
@@ -63,8 +62,7 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
   onStartTutorial,
   onOpenPlayerAid,
   onOpenSolitaire,
-  onOpenTestSuite,
-  onOpenDriveRules,
+  onOpenGameRules,
 }) => {
   const [gamesList, setGamesList] = useState<LobbyGameSummary[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -212,11 +210,11 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 w-full xl:w-auto">
           {onOpenSolitaire && (
             <button
               onClick={onOpenSolitaire}
-              className="px-3 sm:px-3.5 py-2 text-xs font-bold text-amber-300 hover:text-white bg-amber-950/60 border border-amber-600/70 hover:bg-amber-900 rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 shadow"
+              className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 text-[11px] sm:text-xs font-bold text-amber-300 hover:text-white bg-amber-950/60 border border-amber-600/70 hover:bg-amber-900 rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 shadow"
               title="Official Roads & Boats Pre-Made Scenarios (1-Player Solo, Splotter Scenario Book & 1–2P Maps)"
             >
               <span>🗺️</span>
@@ -225,7 +223,7 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
           )}
           <button
             onClick={onOpenPlayerAid}
-            className="px-3 sm:px-3.5 py-2 text-xs font-semibold text-amber-300 hover:text-white bg-slate-900 border border-amber-600/60 hover:bg-slate-800 rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5"
+            className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 text-[11px] sm:text-xs font-semibold text-amber-300 hover:text-white bg-slate-900 border border-amber-600/60 hover:bg-slate-800 rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5"
             title="Open Buildings & Vehicles Player Aid Reference Card"
           >
             <span>📋</span>
@@ -233,98 +231,47 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
           </button>
           <button
             onClick={onStartTutorial}
-            className="px-3 sm:px-4 py-2 text-xs font-semibold text-amber-300 hover:text-white bg-amber-950/60 border border-amber-800/60 hover:bg-amber-900 rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5"
+            className="px-2.5 sm:px-4 py-1.5 sm:py-2 text-[11px] sm:text-xs font-semibold text-amber-300 hover:text-white bg-amber-950/60 border border-amber-800/60 hover:bg-amber-900 rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5"
           >
             <span>🎓</span>
             <span>Tutorial</span>
           </button>
-          {onOpenDriveRules && (
+          {onOpenGameRules && (
             <button
-              onClick={onOpenDriveRules}
-              className="px-3 sm:px-3.5 py-2 text-xs font-bold text-sky-300 hover:text-white bg-slate-900 border border-sky-600/70 hover:bg-sky-950/60 rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 shadow"
-              title="Inspect & Compare Google Drive Rulebook Files (game_files/roads&boats/roadsandboats*)"
+              onClick={onOpenGameRules}
+              className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 text-[11px] sm:text-xs font-bold text-slate-200 hover:text-white bg-slate-900 border border-slate-700 hover:bg-slate-800 rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 shadow"
+              title="Open Roads & Boats Game Rules & Rulebook"
             >
-              <span>📂</span>
-              <span>Drive Rules</span>
-            </button>
-          )}
-          {onOpenTestSuite && (
-            <button
-              onClick={onOpenTestSuite}
-              className="px-3 sm:px-3.5 py-2 text-xs font-bold text-emerald-300 hover:text-white bg-slate-900 border border-emerald-600/70 hover:bg-emerald-950/60 rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 shadow"
-              title="Run Automated Gameplay Simulation & Rule Verifications"
-            >
-              <span>🧪</span>
-              <span>Tests</span>
+              <span>📖</span>
+              <span>Game Rules</span>
             </button>
           )}
           <button
             onClick={() => setShowCreateModal(true)}
-            className="px-3.5 sm:px-4 py-2 text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors whitespace-nowrap shrink-0 shadow ml-auto xl:ml-0"
+            className="px-3 sm:px-4 py-1.5 sm:py-2 text-[11px] sm:text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors whitespace-nowrap shrink-0 shadow sm:ml-auto xl:ml-0"
           >
             + Create Match
           </button>
         </div>
       </header>
 
-      {/* Hero Showcase Section */}
-      <div className="relative border-b border-slate-800 overflow-hidden bg-slate-900">
-        <div className="absolute inset-0 z-0 opacity-25">
-          <img
-            src="/src/assets/images/roads_boats_cover_1794371923388.jpg"
-            alt="Roads & Boats Tabletop Cover Art"
-            className="w-full h-full object-cover"
-            referrerPolicy="no-referrer"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent" />
-        </div>
-
-        <div className="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-12 flex flex-col items-center text-center">
-          <p className="text-xs uppercase tracking-widest text-amber-400 font-bold mb-2">
+      {/* Compact Title Section (No Background Image) */}
+      <div className="relative border-b border-slate-800 bg-slate-900">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-3.5 sm:py-4 flex flex-col items-center text-center">
+          <p className="text-[11px] uppercase tracking-widest text-amber-400 font-bold mb-1">
             The Digital Adaptation of Splotter Spellen's Masterpiece
           </p>
-          <h1 className="text-2xl sm:text-3xl md:text-5xl font-extrabold font-serif-title text-white max-w-3xl leading-tight">
+          <h1 className="text-xl sm:text-2xl md:text-3xl font-extrabold font-serif-title text-white max-w-3xl leading-tight">
             Transport, Logistics & The Great Wonder
           </h1>
-          <p className="mt-3 sm:mt-4 text-sm md:text-base text-slate-300 max-w-2xl leading-relaxed">
+          <p className="mt-1.5 text-xs sm:text-sm text-slate-300 max-w-2xl leading-snug">
             Command pack donkeys, wagons, and river barges across a vibrant hexagonal landscape. Harvest timber, quarry stone, erect factories, and race to construct the Wonder of the World.
           </p>
 
-          <div className="mt-6 sm:mt-8 flex flex-wrap items-center justify-center gap-2.5 sm:gap-3.5">
-            {onOpenSolitaire && (
-              <button
-                onClick={onOpenSolitaire}
-                className="px-5 py-3 text-sm font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-xl transition-all shadow-lg hover:shadow-amber-500/20 flex items-center gap-2"
-              >
-                <span>🗺️</span>
-                <span>Play Pre-Made Scenarios</span>
-              </button>
-            )}
-            <button
-              onClick={() => {
-                onCreateGame('Fast Match', 'river_valley', playerName, true, selectedBotProfileId);
-              }}
-              className="px-5 py-3 text-sm font-bold text-amber-300 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-xl transition-colors shadow-lg"
-            >
-              ⚡ Instant Play vs AI
-            </button>
-            <button
-              onClick={onOpenPlayerAid}
-              className="px-5 py-3 text-sm font-bold text-amber-300 bg-slate-900/90 hover:bg-slate-800 border border-amber-500/70 rounded-xl transition-all shadow-lg flex items-center gap-2"
-            >
-              <span>📋</span>
-              <span>Player Aid Reference</span>
-            </button>
-            <button
-              onClick={onStartTutorial}
-              className="px-5 py-3 text-sm font-bold text-amber-200 bg-amber-950/80 hover:bg-amber-900 border border-amber-600/80 rounded-xl transition-all shadow-lg flex items-center gap-2"
-            >
-              <span>🎓</span>
-              <span>Interactive Tutorial</span>
-            </button>
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
             <button
               onClick={() => setShowCreateModal(true)}
-              className="px-5 py-3 text-sm font-semibold text-white bg-slate-800/90 hover:bg-slate-700 border border-slate-700 rounded-xl transition-colors"
+              className="px-4 py-2 text-xs sm:text-sm font-semibold text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl transition-colors"
             >
               🌐 Host Multiplayer Lobby
             </button>

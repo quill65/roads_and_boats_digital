@@ -14,7 +14,7 @@ import {
 import { canMoveTransporter } from '../game/engine';
 import { useBoardViewport } from './board/useBoardViewport';
 import { HexTileLayer } from './board/HexTileLayer';
-import { EdgeAndRailLayer, TileRiverPathData } from './board/EdgeAndRailLayer';
+import { EdgeAndRailLayer, SelectEdgeRoadOptions, TileRiverPathData } from './board/EdgeAndRailLayer';
 import { TokenLayer } from './board/TokenLayer';
 
 interface HexBoardProps {
@@ -26,7 +26,7 @@ interface HexBoardProps {
   onSelectTransporter: (transporterId: string | null) => void;
   onSelectHex: (hexId: string | null) => void;
   onMoveTransporter: (transporterId: string, targetHexId: string, targetSide?: number) => void;
-  onSelectEdgeForRoad?: (hexA: string, hexB: string) => void;
+  onSelectEdgeForRoad?: (hexA: string, hexB: string, options?: SelectEdgeRoadOptions) => void;
 }
 
 const HEX_RADIUS = 60;
@@ -209,16 +209,6 @@ export const HexBoard: React.FC<HexBoardProps> = ({
           />
         </g>
       </svg>
-
-      {buildMode === 'road' && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 max-w-[calc(100vw-1.5rem)] w-max sm:w-auto px-3 sm:px-4 py-2 sm:py-2.5 bg-slate-900/95 border border-amber-400/80 rounded-xl shadow-2xl backdrop-blur-md flex items-center gap-2.5 sm:gap-3">
-          <span className="text-xl sm:text-2xl animate-pulse shrink-0">🛣️</span>
-          <div className="text-xs min-w-0">
-            <p className="font-bold text-amber-300">Road & Bridge Building Mode</p>
-            <p className="text-slate-300 leading-snug">Tap any glowing border: 🛣️ Road (1 Stone) or 🌉 Bridge (2 Boards)</p>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

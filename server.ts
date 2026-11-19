@@ -424,12 +424,32 @@ app.post('/api/games/:id/action', (req: Request, res: Response) => {
       }
       case 'BUILD_ROAD': {
         const pId = action.playerId || game.activePlayerId;
-        const check = canBuildRoad(game, pId, action.hexA, action.hexB, action.material, action.transporterId);
+        const opts =
+          action.buildType || action.bankPair
+            ? { buildType: action.buildType, bankPair: action.bankPair }
+            : undefined;
+        const check = canBuildRoad(
+          game,
+          pId,
+          action.hexA,
+          action.hexB,
+          action.material,
+          action.transporterId,
+          opts
+        );
         if (!check.valid) {
           reason = check.reason || 'Cannot build road or bridge';
           break;
         }
-        success = executeBuildRoad(game, pId, action.hexA, action.hexB, action.material, action.transporterId);
+        success = executeBuildRoad(
+          game,
+          pId,
+          action.hexA,
+          action.hexB,
+          action.material,
+          action.transporterId,
+          opts
+        );
         break;
       }
       case 'BUILD_FACTORY': {
@@ -490,7 +510,14 @@ app.post('/api/games/:id/action', (req: Request, res: Response) => {
           reason = check.reason || 'Insufficient geese or invalid technology requirements';
           break;
         }
-        success = executeResearchTech(game, pId, action.hexId, action.techId, action.transporterId);
+        success = executeResearchTech(
+          game,
+          pId,
+          action.hexId,
+          action.techId,
+          action.transporterId,
+          action.upgrades
+        );
         break;
       }
       case 'REPLENISH_MINE': {

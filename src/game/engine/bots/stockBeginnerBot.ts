@@ -974,6 +974,45 @@ function runMovementPhase(state: GameState, bot: Player): void {
 
   const handledIds = new Set<string>();
 
+  const getResearchSiteAttendants = (): Transporter[] => {
+    if (!researchSite) return [];
+    const accRes = getAccessibleSidesOnHex(state, researchSite.hexId, researchSite.side);
+    return Object.values(state.transporters).filter(
+      tr =>
+        tr.ownerId === bot.id &&
+        tr.hexId === researchSite.hexId &&
+        accRes.has(getTransporterSide(state, tr))
+    );
+  };
+
+  const getResearchSitePaperCount = (): number => {
+    if (!researchSite) return 0;
+    const accRes = getAccessibleSidesOnHex(state, researchSite.hexId, researchSite.side);
+    return (
+      getBotGroundGood(state, bot, researchSite.hexId, 'paper', researchSite.side) +
+      Object.values(state.transporters)
+        .filter(
+          tr =>
+            tr.ownerId === bot.id &&
+            tr.hexId === researchSite.hexId &&
+            accRes.has(getTransporterSide(state, tr))
+        )
+        .reduce((s, tr) => s + (tr.cargo.paper || 0), 0)
+    );
+  };
+
+  // Reserve one transporter on researchSite when 2 Geese + 1 Paper are ready so they aren't removed unattended in Production
+  let researchAttendantId: string | null = null;
+  if (!isFinalRound && researchSite && getResearchSitePaperCount() >= 1) {
+    const attendants = getResearchSiteAttendants().sort(
+      (a, b) => getTransporterCargoCount(a) - getTransporterCargoCount(b)
+    );
+    if (attendants.length > 0) {
+      researchAttendantId = attendants[0].id;
+      handledIds.add(researchAttendantId);
+    }
+  }
+
   const processTransporter = (t: Transporter, localPickupOnly: boolean): boolean => {
     const tSide = getTransporterSide(state, t);
     let targetSet: Set<string> | null = null;
@@ -1000,19 +1039,9 @@ function runMovementPhase(state: GameState, bot: Player): void {
     }
 
     if (!isFinalRound) {
-    // 2. Specialized Mines Research (1 Paper -> hex/side with 2 Geese)
+    // 2. Specialized Mines Research (1 Paper -> hex/side with 2 Geese, attended by a transporter)
     if (!targetSet && researchSite && (ownedTotals.paper || 0) >= 1) {
-      const accRes = getAccessibleSidesOnHex(state, researchSite.hexId, researchSite.side);
-      const paperAlreadyAtResearch =
-        getBotGroundGood(state, bot, researchSite.hexId, 'paper', researchSite.side) +
-        Object.values(state.transporters)
-          .filter(
-            tr =>
-              tr.ownerId === bot.id &&
-              tr.hexId === researchSite.hexId &&
-              accRes.has(getTransporterSide(state, tr))
-          )
-          .reduce((s, tr) => s + (tr.cargo.paper || 0), 0);
+      const paperAlreadyAtResearch = getResearchSitePaperCount();
 
       if (paperAlreadyAtResearch < 1) {
         if ((t.cargo.paper || 0) >= 1) {
@@ -1036,6 +1065,9 @@ function runMovementPhase(state: GameState, bot: Player): void {
             }
           }
         }
+      } else if (!researchAttendantId && getResearchSiteAttendants().length === 0) {
+        // Paper + 2 Geese are sitting unattended on researchSite: dispatch a transporter to attend before Production
+        setTarget(new Set([researchSite.hexId]), { [researchSite.hexId]: researchSite.side });
       }
     }
 
@@ -1529,8 +1561,16 @@ function runMovementPhase(state: GameState, bot: Player): void {
       unloadCompletedDeliveries(state, bot, t, activeBuildTarget, researchSite, intendedDestHexId, true);
       collectCriticalOutputsOnCurrentHex(state, bot, t, researchSite, canCollectCoinsDirect);
 
+      // If this transporter is now the sole attendant on a ready researchSite, keep it stationed there for Production
+      const curAttendants = researchSite && getResearchSitePaperCount() >= 1 ? getResearchSiteAttendants() : [];
+      const mustStayForResearch =
+        curAttendants.length === 1 && curAttendants[0].id === t.id;
+      if (mustStayForResearch) {
+        researchAttendantId = t.id;
+      }
+
       // If arriving on a build-material source while still having movesLeft, load ONLY materials not already in transit and return
-      if (t.movesLeft > 0 && activeBuildTarget) {
+      if (!mustStayForResearch && t.movesLeft > 0 && activeBuildTarget) {
         const rem = getBuildRemainingNeeds(state, bot, activeBuildTarget);
         if (Object.keys(rem).length > 0) {
           const carriedElsewhere: Partial<Record<GoodType, number>> = {};
@@ -1558,6 +1598,7 @@ function runMovementPhase(state: GameState, bot: Player): void {
 
   // Stage 1: Loaded transporters finish delivering cargo first
   for (const t of transporters) {
+    if (handledIds.has(t.id)) continue;
     if (getTransporterCargoCount(t) > 0) {
       if (processTransporter(t, false)) {
         handledIds.add(t.id);
@@ -1582,29 +1623,35 @@ function runMovementPhase(state: GameState, bot: Player): void {
   }
 }
 
+function runProductionPhaseBot(state: GameState, bot: Player): void {
+  const transporters = Object.values(state.transporters).filter(t => t.ownerId === bot.id);
+  if (transporters.length === 0) return;
+
+  // Attempt Specialized Mines research (2 Geese + 1 Paper + attending transporter) during Production Phase
+  const researchSite = findResearchSite(state, bot);
+  if (researchSite) {
+    const accRes = getAccessibleSidesOnHex(state, researchSite.hexId, researchSite.side);
+    const researcher = transporters.find(
+      t => t.hexId === researchSite.hexId && accRes.has(getTransporterSide(state, t))
+    );
+    if (researcher) {
+      botResearchTech(
+        state,
+        bot,
+        researchSite.hexId,
+        'specialized_mines',
+        researcher.id,
+        researchSite.side
+      );
+    }
+  }
+}
+
 function runBuildingPhase(state: GameState, bot: Player): void {
   const transporters = Object.values(state.transporters).filter(t => t.ownerId === bot.id);
   if (transporters.length === 0) return;
 
-  // 1. Attempt Specialized Mines research (2 Geese + 1 Paper)
-  const researchSite = findResearchSite(state, bot);
-  if (researchSite) {
-    const accRes = getAccessibleSidesOnHex(state, researchSite.hexId, researchSite.side);
-    const researcher =
-      transporters.find(
-        t => t.hexId === researchSite.hexId && accRes.has(getTransporterSide(state, t))
-      ) || transporters[0];
-    botResearchTech(
-      state,
-      bot,
-      researchSite.hexId,
-      'specialized_mines',
-      researcher?.id,
-      researchSite.side
-    );
-  }
-
-  // 2. Construct next priority factory in the Stock Certificate pipeline
+  // 1. Construct next priority factory in the Stock Certificate pipeline
   const { reachableStates } = getAllBotReachableStates(state, transporters);
   let builtSomething = true;
 
@@ -1721,7 +1768,9 @@ export function runStockBeginnerBotTurn(state: GameState, botPlayerId: string): 
   const bot = state.players.find(p => p.id === botPlayerId);
   if (!bot || !bot.isAI || bot.resigned) return;
 
-  if (state.phase === 'MOVEMENT') {
+  if (state.phase === 'PRODUCTION') {
+    runProductionPhaseBot(state, bot);
+  } else if (state.phase === 'MOVEMENT') {
     runMovementPhase(state, bot);
   } else if (state.phase === 'BUILDING') {
     runBuildingPhase(state, bot);

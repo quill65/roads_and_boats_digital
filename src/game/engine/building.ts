@@ -2,12 +2,13 @@
  * Infrastructure, Factory Construction, Wonder Contributions & Tech Research
  */
 
-import { BuildingType, GameState, GoodType, Transporter } from '../types';
+import { BuildingType, GameState, GoodType, ResearchUpgradeSelection, Transporter } from '../types';
 import { INFRASTRUCTURE_RULES, ROADS_AND_BOATS_RULES, TRANSPORTER_RULES } from '../rules-engine';
 import { BUILDING_SPECS, TECH_UPGRADES, TRANSPORTER_SPECS } from '../constants';
 import { areHexNeighbors, getEdgeKey, parseHexKey } from '../hexMath';
 import {
   doesSideFlankRiverEdge,
+  edgeHasBankRoadPair,
   ensureHexGoodsBySide,
   getAccessibleSidesOnHex,
   getBestAccessibleSide,
@@ -17,6 +18,7 @@ import {
   getInteractableSidesForTransporter,
   getMatchingBankAcrossRiverEdge,
   getNeighborSideOnHex,
+  getRiverEdgeBankPairs,
   getTransporterSide,
   isSideAdjacentToWater,
   removeGoodOnSide,
@@ -152,14 +154,26 @@ function consumeAccessibleSiteMaterial(
   }
 }
 
+export interface BuildRoadOptions {
+  buildType?: 'road' | 'bridge';
+  bankPair?: { hexASide: number; hexBSide: number };
+}
+
 export function canBuildRoad(
   state: GameState,
   playerId: string,
   hexA: string,
   hexB: string,
   material: 'boards' | 'stone',
-  transporterId: string
-): { valid: boolean; reason?: string; isBridge?: boolean; cost?: number } {
+  transporterId: string,
+  options?: BuildRoadOptions
+): {
+  valid: boolean;
+  reason?: string;
+  isBridge?: boolean;
+  cost?: number;
+  bankPair?: { hexASide: number; hexBSide: number };
+} {
   if (state.phase !== 'BUILDING') {
     return { valid: false, reason: 'Roads may only be constructed during the Building Phase' };
   }
@@ -173,10 +187,6 @@ export function canBuildRoad(
   const edgeKey = getEdgeKey(coordA.q, coordA.r, coordB.q, coordB.r);
   const edge = state.edges[edgeKey];
   if (!edge) return { valid: false, reason: 'Hex edge does not exist' };
-
-  if (edge.improvement === 'road' || edge.improvement === 'bridge' || edge.isRailroad) {
-    return { valid: false, reason: 'A road, bridge, or railroad already exists on this border' };
-  }
 
   const transporter = state.transporters[transporterId];
   if (!transporter) return { valid: false, reason: 'Builder transporter not found' };
@@ -195,7 +205,17 @@ export function canBuildRoad(
     return { valid: false, reason: 'Cannot construct roads or bridges into open sea water' };
   }
 
-  const isBridge = edge.isRiver;
+  if (options?.buildType === 'bridge' && !edge.isRiver) {
+    return { valid: false, reason: 'River Bridges can only be built across river borders' };
+  }
+
+  const isBridge =
+    options?.buildType === 'bridge'
+      ? true
+      : options?.buildType === 'road'
+      ? false
+      : edge.isRiver && material === 'boards';
+
   const cost = isBridge ? INFRASTRUCTURE_RULES.bridge.materialCost : INFRASTRUCTURE_RULES.road.materialCost;
 
   if (isBridge && !(INFRASTRUCTURE_RULES.bridge.allowedMaterials as ReadonlyArray<string>).includes(material)) {
@@ -215,6 +235,25 @@ export function canBuildRoad(
     };
   }
 
+  if (isBridge) {
+    if (edge.improvement === 'bridge' || edge.isRailroad) {
+      return { valid: false, reason: 'A bridge or railroad already exists on this border', isBridge, cost };
+    }
+  } else if (!edge.isRiver) {
+    if (edge.improvement === 'road' || edge.improvement === 'bridge' || edge.isRailroad) {
+      return { valid: false, reason: 'A road, bridge, or railroad already exists on this border', isBridge, cost };
+    }
+  } else {
+    if (edge.improvement === 'bridge' || edge.isRailroad) {
+      return {
+        valid: false,
+        reason: 'A bridge or railroad already spans this river border',
+        isBridge,
+        cost,
+      };
+    }
+  }
+
   const builderHexId = transporter.hexId;
   const otherHexId = builderHexId === hexA ? hexB : hexA;
   const builderSide = getTransporterSide(state, transporter);
@@ -222,6 +261,7 @@ export function canBuildRoad(
   const accessibleBuilder = getBuilderAccessibleSides(state, builderHexId, transporter);
 
   let accessibleOther: Set<number>;
+  let resolvedBankPair: { hexASide: number; hexBSide: number } | undefined;
 
   if (isBridge) {
     if (
@@ -242,6 +282,76 @@ export function canBuildRoad(
       otherHexId
     );
     accessibleOther = getAccessibleSidesOnHex(state, otherHexId, matchingOtherSide);
+  } else if (edge.isRiver) {
+    if (
+      !(specT.waterOnly && transporter.waterLocation === 'river') &&
+      !doesSideFlankRiverEdge(state, builderHexId, builderSide, edgeKey)
+    ) {
+      return {
+        valid: false,
+        reason: 'Blocked by an unbridged river inside this hex! Build a Bridge first to reach this riverbank.',
+        isBridge,
+        cost,
+      };
+    }
+
+    const allPairs = getRiverEdgeBankPairs(state, edge);
+    const getBuilderSideForPair = (p: { hexASide: number; hexBSide: number }) =>
+      builderHexId === edge.hexA ? p.hexASide : p.hexBSide;
+    const getOtherSideForPair = (p: { hexASide: number; hexBSide: number }) =>
+      builderHexId === edge.hexA ? p.hexBSide : p.hexASide;
+
+    if (options?.bankPair) {
+      const matched = allPairs.find(
+        p => p.hexASide === options.bankPair!.hexASide && p.hexBSide === options.bankPair!.hexBSide
+      );
+      if (!matched) {
+        return { valid: false, reason: 'Invalid riverbank side for this river border', isBridge, cost };
+      }
+      if (!accessibleBuilder.has(getBuilderSideForPair(matched))) {
+        return {
+          valid: false,
+          reason: 'Blocked by an unbridged river inside this hex! Build a Bridge first to reach that riverbank.',
+          isBridge,
+          cost,
+        };
+      }
+      resolvedBankPair = matched;
+    } else {
+      const reachablePairs = allPairs.filter(p => accessibleBuilder.has(getBuilderSideForPair(p)));
+      const unbuiltPairs = reachablePairs.filter(p => !edgeHasBankRoadPair(edge, p));
+      const pool = unbuiltPairs.length > 0 ? unbuiltPairs : reachablePairs;
+      const bestOther = getBestAccessibleSide(state, otherHexId);
+      resolvedBankPair =
+        pool.find(
+          p => getBuilderSideForPair(p) === builderSide && getOtherSideForPair(p) === bestOther
+        ) ||
+        pool.find(p => getBuilderSideForPair(p) === builderSide) ||
+        pool.find(p => getOtherSideForPair(p) === bestOther) ||
+        pool[0];
+    }
+
+    if (!resolvedBankPair) {
+      return {
+        valid: false,
+        reason: 'Blocked by an unbridged river inside this hex! Build a Bridge first to reach this riverbank.',
+        isBridge,
+        cost,
+      };
+    }
+
+    if (edgeHasBankRoadPair(edge, resolvedBankPair)) {
+      return {
+        valid: false,
+        reason: 'A road already exists alongside this bank of the river',
+        isBridge,
+        cost,
+        bankPair: resolvedBankPair,
+      };
+    }
+
+    const otherSide = getOtherSideForPair(resolvedBankPair);
+    accessibleOther = getAccessibleSidesOnHex(state, otherHexId, otherSide);
   } else {
     const requiredSide = getNeighborSideOnHex(state, builderHexId, otherHexId);
     if (requiredSide !== null && !accessibleBuilder.has(requiredSide)) {
@@ -285,10 +395,11 @@ export function canBuildRoad(
       reason: `Requires ${cost}x ${material} (accessible on this side: ${totalAvailable})`,
       isBridge,
       cost,
+      bankPair: resolvedBankPair,
     };
   }
 
-  return { valid: true, isBridge, cost };
+  return { valid: true, isBridge, cost, bankPair: resolvedBankPair };
 }
 
 export function executeBuildRoad(
@@ -297,9 +408,10 @@ export function executeBuildRoad(
   hexA: string,
   hexB: string,
   material: 'boards' | 'stone',
-  transporterId: string
+  transporterId: string,
+  options?: BuildRoadOptions
 ): boolean {
-  const check = canBuildRoad(state, playerId, hexA, hexB, material, transporterId);
+  const check = canBuildRoad(state, playerId, hexA, hexB, material, transporterId, options);
   if (!check.valid || !check.cost) return false;
 
   const coordA = parseHexKey(hexA);
@@ -316,6 +428,12 @@ export function executeBuildRoad(
         state,
         otherHexId,
         getMatchingBankAcrossRiverEdge(state, builderHexId, builderSide, otherHexId)
+      )
+    : edge.isRiver && check.bankPair
+    ? getAccessibleSidesOnHex(
+        state,
+        otherHexId,
+        builderHexId === edge.hexA ? check.bankPair.hexBSide : check.bankPair.hexASide
       )
     : (() => {
         const os = getNeighborSideOnHex(state, otherHexId, builderHexId);
@@ -367,12 +485,29 @@ export function executeBuildRoad(
     }
   }
 
-  edge.improvement = check.isBridge ? 'bridge' : 'road';
-  edge.ownerId = playerId;
+  if (check.isBridge) {
+    edge.improvement = 'bridge';
+    edge.ownerId = playerId;
+  } else if (edge.isRiver && check.bankPair) {
+    if (!edge.riverBankRoads) edge.riverBankRoads = [];
+    edge.riverBankRoads.push({
+      hexASide: check.bankPair.hexASide,
+      hexBSide: check.bankPair.hexBSide,
+      ownerId: playerId,
+    });
+    if (!edge.ownerId) edge.ownerId = playerId;
+  } else {
+    edge.improvement = 'road';
+    edge.ownerId = playerId;
+  }
 
   addLog(
     state,
-    `Constructed a ${check.isBridge ? 'Bridge' : 'Road'} between (${hexA}) and (${hexB}) using ${check.cost}x ${material}`,
+    check.isBridge
+      ? `Constructed a Bridge between (${hexA}) and (${hexB}) using ${check.cost}x ${material}`
+      : edge.isRiver
+      ? `Constructed a Road alongside the river between (${hexA}) and (${hexB}) using ${check.cost}x ${material}`
+      : `Constructed a Road between (${hexA}) and (${hexB}) using ${check.cost}x ${material}`,
     playerId
   );
 
@@ -799,21 +934,50 @@ function findResearchAccessibleSides(
   reqGeese: number,
   reqPaper: number,
   transporterId?: string
-): { accessibleSides: Set<number>; totalGeese: number; totalPaper: number } {
-  const transporter = transporterId ? state.transporters[transporterId] : undefined;
-  if (transporter && transporter.hexId === hexId && transporter.ownerId === playerId) {
+): {
+  accessibleSides: Set<number>;
+  totalGeese: number;
+  totalPaper: number;
+  hasOwnTransporter: boolean;
+  transporterId?: string;
+} {
+  if (transporterId) {
+    const transporter = state.transporters[transporterId];
+    if (!transporter || transporter.hexId !== hexId || transporter.ownerId !== playerId) {
+      return {
+        accessibleSides: new Set<number>([0]),
+        totalGeese: 0,
+        totalPaper: 0,
+        hasOwnTransporter: false,
+      };
+    }
     const gRes = getAccessibleSiteMaterials(state, playerId, hexId, 'goose', transporterId);
     const pRes = getAccessibleSiteMaterials(state, playerId, hexId, 'paper', transporterId);
     return {
       accessibleSides: gRes.accessibleSides,
       totalGeese: gRes.totalAvailable,
       totalPaper: pRes.totalAvailable,
+      hasOwnTransporter: true,
+      transporterId: transporter.id,
     };
   }
 
-  // No transporter specified: check each disjoint bank component on hexId for both 2 Geese + 1 Paper
+  // No transporter specified: check each disjoint bank component on hexId.
+  // A transporter owned by playerId must be present on the accessible side for research to occur.
   const layout = getHexSideLayout(state, hexId);
-  let best = { accessibleSides: new Set<number>([0]), totalGeese: 0, totalPaper: 0 };
+  let bestWithTransporter: {
+    accessibleSides: Set<number>;
+    totalGeese: number;
+    totalPaper: number;
+    hasOwnTransporter: boolean;
+    transporterId?: string;
+  } | null = null;
+  let bestUnattended: {
+    accessibleSides: Set<number>;
+    totalGeese: number;
+    totalPaper: number;
+    hasOwnTransporter: boolean;
+  } | null = null;
 
   for (const region of layout.sides) {
     const sides = getAccessibleSidesOnHex(state, hexId, region.side);
@@ -824,22 +988,276 @@ function findResearchAccessibleSides(
       gSum += m.goose || 0;
       pSum += m.paper || 0;
     }
+
+    const ownTransporters: Transporter[] = [];
     Object.values(state.transporters).forEach(t => {
       if (t.ownerId === playerId && t.hexId === hexId && isTransporterOnAccessibleSides(state, t, sides)) {
+        ownTransporters.push(t);
         gSum += t.cargo.goose || 0;
         pSum += t.cargo.paper || 0;
       }
     });
 
-    if (gSum >= reqGeese && pSum >= reqPaper) {
-      return { accessibleSides: sides, totalGeese: gSum, totalPaper: pSum };
-    }
-    if (gSum + pSum > best.totalGeese + best.totalPaper) {
-      best = { accessibleSides: sides, totalGeese: gSum, totalPaper: pSum };
+    if (ownTransporters.length > 0) {
+      if (gSum >= reqGeese && pSum >= reqPaper) {
+        return {
+          accessibleSides: sides,
+          totalGeese: gSum,
+          totalPaper: pSum,
+          hasOwnTransporter: true,
+          transporterId: ownTransporters[0].id,
+        };
+      }
+      if (
+        !bestWithTransporter ||
+        gSum + pSum > bestWithTransporter.totalGeese + bestWithTransporter.totalPaper
+      ) {
+        bestWithTransporter = {
+          accessibleSides: sides,
+          totalGeese: gSum,
+          totalPaper: pSum,
+          hasOwnTransporter: true,
+          transporterId: ownTransporters[0].id,
+        };
+      }
+    } else if (
+      !bestUnattended ||
+      gSum + pSum > bestUnattended.totalGeese + bestUnattended.totalPaper
+    ) {
+      bestUnattended = {
+        accessibleSides: sides,
+        totalGeese: gSum,
+        totalPaper: pSum,
+        hasOwnTransporter: false,
+      };
     }
   }
 
-  return best;
+  if (bestUnattended && bestUnattended.totalGeese >= reqGeese && bestUnattended.totalPaper >= reqPaper) {
+    return bestUnattended;
+  }
+
+  return (
+    bestWithTransporter ||
+    bestUnattended || {
+      accessibleSides: new Set<number>([0]),
+      totalGeese: 0,
+      totalPaper: 0,
+      hasOwnTransporter: false,
+    }
+  );
+}
+
+export interface ResearchSiteCandidate {
+  hexId: string;
+  side: number;
+  compassLabel?: string;
+  totalGeese: number;
+  totalPaper: number;
+  transporterId?: string;
+}
+
+export interface LegalResearchUpgrade {
+  hexId: string;
+  buildingId: string;
+  currentType: BuildingType;
+  currentName: string;
+  targetType: BuildingType;
+  targetName: string;
+  upgradeKind: 'factory_upgrade' | 'specialize_mine' | 'enlarge_mine' | 'replenish_mine';
+  description: string;
+}
+
+/**
+ * Returns all hex sites where `playerId` currently meets the research conditions:
+ * at least one transporter owned by `playerId` attending the accessible hex side
+ * with >= 2 Geese + 1 Paper (combining ground + player cargo on that side).
+ */
+export function getEligibleResearchSites(
+  state: GameState,
+  playerId: string
+): ResearchSiteCandidate[] {
+  const player = state.players.find(p => p.id === playerId);
+  if (!player) return [];
+
+  const unlocked = new Set(player.unlockedTechs || []);
+  const hasRemainingTech = Object.keys(TECH_UPGRADES).some(id => !unlocked.has(id));
+  if (!hasRemainingTech) return [];
+
+  const reqGeese = ROADS_AND_BOATS_RULES.research.standardCost.goose;
+  const reqPaper = ROADS_AND_BOATS_RULES.research.standardCost.paper;
+  const results: ResearchSiteCandidate[] = [];
+
+  for (const hex of Object.values(state.hexes)) {
+    const layout = getHexSideLayout(state, hex.id);
+    const seenComponents = new Set<string>();
+
+    for (const region of layout.sides) {
+      const accessibleSides = getAccessibleSidesOnHex(state, hex.id, region.side);
+      const compKey = Array.from(accessibleSides).sort((a, b) => a - b).join(',');
+      if (seenComponents.has(compKey)) continue;
+      seenComponents.add(compKey);
+
+      let totalGeese = 0;
+      let totalPaper = 0;
+      for (const s of accessibleSides) {
+        const m = getGoodsOnSide(state, hex.id, s);
+        totalGeese += m.goose || 0;
+        totalPaper += m.paper || 0;
+      }
+
+      const ownTransporters: Transporter[] = [];
+      Object.values(state.transporters).forEach(t => {
+        if (t.hexId !== hex.id || !isTransporterOnAccessibleSides(state, t, accessibleSides)) return;
+        if (t.ownerId === playerId) {
+          ownTransporters.push(t);
+          totalGeese += t.cargo.goose || 0;
+          totalPaper += t.cargo.paper || 0;
+        }
+      });
+
+      // A transporter owned by the researching player must be present on the tile side
+      if (ownTransporters.length === 0) continue;
+
+      if (totalGeese >= reqGeese && totalPaper >= reqPaper) {
+        results.push({
+          hexId: hex.id,
+          side: region.side,
+          compassLabel: layout.isSplit ? region.compassLabel : undefined,
+          totalGeese,
+          totalPaper,
+          transporterId: ownTransporters[0].id,
+        });
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Returns every legal building/mine upgrade on `playerId`'s map available when researching `techId`.
+ */
+export function getLegalResearchUpgrades(
+  state: GameState,
+  playerId: string,
+  techId: string
+): LegalResearchUpgrade[] {
+  const spec = TECH_UPGRADES[techId];
+  if (!spec) return [];
+
+  const upgrades: LegalResearchUpgrade[] = [];
+
+  // 1. Free factory upgrades (Rowing, Trucking, Shipping)
+  if (spec.unlocksBuilding && spec.freeUpgradeFromBuildings && spec.freeUpgradeFromBuildings.length > 0) {
+    const targetType = spec.unlocksBuilding;
+    const targetName = BUILDING_SPECS[targetType]?.name || targetType;
+    Object.values(state.hexes).forEach(h => {
+      if (
+        h.building &&
+        h.building.ownerId === playerId &&
+        spec.freeUpgradeFromBuildings!.includes(h.building.type)
+      ) {
+        const currentName = BUILDING_SPECS[h.building.type]?.name || h.building.type;
+        upgrades.push({
+          hexId: h.id,
+          buildingId: h.building.id,
+          currentType: h.building.type,
+          currentName,
+          targetType,
+          targetName,
+          upgradeKind: 'factory_upgrade',
+          description: `Free upgrade from ${currentName} to ${targetName}`,
+        });
+      }
+    });
+  }
+
+  // 2. Mine Specialisation (4 Gold or 4 Iron — mutually exclusive with Enlargement)
+  if (techId === 'specialized_mines') {
+    Object.values(state.hexes).forEach(h => {
+      if (
+        h.building &&
+        h.building.ownerId === playerId &&
+        h.building.type === 'mine' &&
+        h.building.mineVariant !== 'enlarged'
+      ) {
+        const isDepleted =
+          h.building.minePool !== undefined &&
+          (h.building.minePool.gold || 0) + (h.building.minePool.iron || 0) === 0;
+        if (!isDepleted) {
+          upgrades.push({
+            hexId: h.id,
+            buildingId: h.building.id,
+            currentType: 'mine',
+            currentName: BUILDING_SPECS.mine.name,
+            targetType: 'mine',
+            targetName: 'Specialized Mine',
+            upgradeKind: 'specialize_mine',
+            description: 'Specialize ore pool to 4 Gold (0 Iron) or 4 Iron (0 Gold)',
+          });
+        }
+      }
+    });
+  }
+
+  // 3. Mine Enlargement (5 Gold + 5 Iron — mutually exclusive with Specialisation)
+  if (techId === 'large_mines') {
+    Object.values(state.hexes).forEach(h => {
+      if (
+        h.building &&
+        h.building.ownerId === playerId &&
+        h.building.type === 'mine' &&
+        h.building.mineVariant !== 'specialized'
+      ) {
+        const isDepleted =
+          h.building.minePool !== undefined &&
+          (h.building.minePool.gold || 0) + (h.building.minePool.iron || 0) === 0;
+        if (!isDepleted) {
+          upgrades.push({
+            hexId: h.id,
+            buildingId: h.building.id,
+            currentType: 'mine',
+            currentName: BUILDING_SPECS.mine.name,
+            targetType: 'mine',
+            targetName: 'Enlarged Mine',
+            upgradeKind: 'enlarge_mine',
+            description: 'Expand ore pool to 5 Gold + 5 Iron (10 counters)',
+          });
+        }
+      }
+    });
+  }
+
+  // 4. New Shafts (replenish depleted mines)
+  if (techId === 'extra_shafts') {
+    Object.values(state.hexes).forEach(h => {
+      if (h.building && h.building.ownerId === playerId && h.building.type === 'mine') {
+        const remaining = (h.building.minePool?.gold || 0) + (h.building.minePool?.iron || 0);
+        if (remaining === 0) {
+          const variant = h.building.mineVariant;
+          const poolLabel =
+            variant === 'specialized'
+              ? '4 Gold'
+              : variant === 'enlarged'
+              ? '5 Gold + 5 Iron'
+              : '3 Gold + 3 Iron';
+          upgrades.push({
+            hexId: h.id,
+            buildingId: h.building.id,
+            currentType: 'mine',
+            currentName: BUILDING_SPECS.mine.name,
+            targetType: 'mine',
+            targetName: 'Replenished Mine',
+            upgradeKind: 'replenish_mine',
+            description: `Sink new shaft to restore fresh ore pool (${poolLabel})`,
+          });
+        }
+      }
+    });
+  }
+
+  return upgrades;
 }
 
 export function canResearchTech(
@@ -849,8 +1267,8 @@ export function canResearchTech(
   techId: string,
   transporterId?: string
 ): { valid: boolean; reason?: string } {
-  if (state.phase !== 'BUILDING') {
-    return { valid: false, reason: 'Research can only be conducted during the Building Phase' };
+  if (state.phase !== 'PRODUCTION') {
+    return { valid: false, reason: 'Research can only be conducted during the Production Phase' };
   }
   const spec = TECH_UPGRADES[techId];
   if (!spec) return { valid: false, reason: 'Unknown technology' };
@@ -865,7 +1283,7 @@ export function canResearchTech(
   const hex = state.hexes[hexId];
   if (!hex) return { valid: false, reason: 'Hex not found' };
 
-  const { totalGeese, totalPaper } = findResearchAccessibleSides(
+  const { totalGeese, totalPaper, hasOwnTransporter } = findResearchAccessibleSides(
     state,
     playerId,
     hexId,
@@ -873,6 +1291,13 @@ export function canResearchTech(
     spec.requiredPaper,
     transporterId
   );
+
+  if (!hasOwnTransporter) {
+    return {
+      valid: false,
+      reason: 'A transporter must be present on this tile side with Geese and Paper to conduct research',
+    };
+  }
 
   if (totalGeese < spec.requiredGeese) {
     return {
@@ -896,13 +1321,23 @@ export function executeResearchTech(
   playerId: string,
   hexId: string,
   techId: string,
-  transporterId?: string
+  transporterId?: string,
+  upgrades?: ResearchUpgradeSelection[]
 ): boolean {
   const check = canResearchTech(state, playerId, hexId, techId, transporterId);
   if (!check.valid) return false;
 
   const spec = TECH_UPGRADES[techId];
   const player = state.players.find(p => p.id === playerId)!;
+  const legalUpgrades = getLegalResearchUpgrades(state, playerId, techId);
+
+  // Determine which legal upgrades to apply: explicit selection from dialog, or all legal upgrades by default
+  const selectionByHex = new Map<string, ResearchUpgradeSelection>();
+  if (upgrades !== undefined) {
+    upgrades.forEach(sel => selectionByHex.set(sel.hexId, sel));
+  } else {
+    legalUpgrades.forEach(u => selectionByHex.set(u.hexId, { hexId: u.hexId, mineSpecialization: 'gold' }));
+  }
 
   recordHistorySnapshot(state, `Research ${spec.name} with Geese and Paper`, playerId);
 
@@ -937,76 +1372,53 @@ export function executeResearchTech(
   if (!player.unlockedTechs) player.unlockedTechs = [];
   player.unlockedTechs.push(techId);
 
-  // 3rd Edition Rule: Free automatic factory upgrades when researching Rowing, Trucking, or Shipping
-  if (spec.unlocksBuilding && spec.freeUpgradeFromBuildings && spec.freeUpgradeFromBuildings.length > 0) {
-    Object.values(state.hexes).forEach(h => {
-      if (
-        h.building &&
-        h.building.ownerId === playerId &&
-        spec.freeUpgradeFromBuildings!.includes(h.building.type)
-      ) {
-        const prevType = BUILDING_SPECS[h.building.type]?.name || h.building.type;
-        const nextType = BUILDING_SPECS[spec.unlocksBuilding!]?.name || spec.unlocksBuilding!;
-        h.building.type = spec.unlocksBuilding!;
-        addLog(
-          state,
-          `⬆️ Free Research Upgrade: ${prevType} on (${h.id}) upgraded to ${nextType}!`,
-          playerId
-        );
-      }
-    });
-  }
+  // Apply chosen legal upgrades
+  for (const legal of legalUpgrades) {
+    const sel = selectionByHex.get(legal.hexId);
+    if (!sel) continue;
+    const h = state.hexes[legal.hexId];
+    if (!h?.building || h.building.ownerId !== playerId) continue;
 
-  // 3rd Edition Rule: Mine pool overrides for Specialisation, Enlargement (mutually exclusive per mine), and NewShafts
-  if (techId === 'specialized_mines') {
-    Object.values(state.hexes).forEach(h => {
-      if (
-        h.building &&
-        h.building.ownerId === playerId &&
-        h.building.type === 'mine' &&
-        h.building.mineVariant !== 'enlarged'
-      ) {
-        const isDepleted =
-          h.building.minePool !== undefined &&
-          (h.building.minePool.gold || 0) + (h.building.minePool.iron || 0) === 0;
-        if (!isDepleted) {
-          h.building.mineVariant = 'specialized';
-          h.building.minePool = { gold: 4, iron: 0 };
-        }
-      }
-    });
-  } else if (techId === 'large_mines') {
-    Object.values(state.hexes).forEach(h => {
-      if (
-        h.building &&
-        h.building.ownerId === playerId &&
-        h.building.type === 'mine' &&
-        h.building.mineVariant !== 'specialized'
-      ) {
-        const isDepleted =
-          h.building.minePool !== undefined &&
-          (h.building.minePool.gold || 0) + (h.building.minePool.iron || 0) === 0;
-        if (!isDepleted) {
-          h.building.mineVariant = 'enlarged';
-          h.building.minePool = { gold: 5, iron: 5 };
-        }
-      }
-    });
-  } else if (techId === 'extra_shafts') {
-    Object.values(state.hexes).forEach(h => {
-      if (h.building && h.building.ownerId === playerId && h.building.type === 'mine') {
-        const remaining = (h.building.minePool?.gold || 0) + (h.building.minePool?.iron || 0);
-        if (remaining === 0) {
-          const variant = h.building.mineVariant;
-          h.building.minePool =
-            variant === 'specialized'
-              ? { gold: 4, iron: 0 }
-              : variant === 'enlarged'
-              ? { gold: 5, iron: 5 }
-              : { gold: 3, iron: 3 };
-        }
-      }
-    });
+    if (legal.upgradeKind === 'factory_upgrade') {
+      const prevType = BUILDING_SPECS[h.building.type]?.name || h.building.type;
+      const nextType = BUILDING_SPECS[legal.targetType]?.name || legal.targetType;
+      h.building.type = legal.targetType;
+      addLog(
+        state,
+        `⬆️ Free Research Upgrade: ${prevType} on (${h.id}) upgraded to ${nextType}!`,
+        playerId
+      );
+    } else if (legal.upgradeKind === 'specialize_mine') {
+      const focus = sel.mineSpecialization === 'iron' ? 'iron' : 'gold';
+      h.building.mineVariant = 'specialized';
+      h.building.minePool = focus === 'iron' ? { gold: 0, iron: 4 } : { gold: 4, iron: 0 };
+      addLog(
+        state,
+        `💎 Specialized Mine on (${h.id}) for 4 ${focus === 'iron' ? 'Iron' : 'Gold'}!`,
+        playerId
+      );
+    } else if (legal.upgradeKind === 'enlarge_mine') {
+      h.building.mineVariant = 'enlarged';
+      h.building.minePool = { gold: 5, iron: 5 };
+      addLog(
+        state,
+        `⛏️ Enlarged Mine on (${h.id}) to 5 Gold + 5 Iron!`,
+        playerId
+      );
+    } else if (legal.upgradeKind === 'replenish_mine') {
+      const variant = h.building.mineVariant;
+      h.building.minePool =
+        variant === 'specialized'
+          ? { gold: 4, iron: 0 }
+          : variant === 'enlarged'
+          ? { gold: 5, iron: 5 }
+          : { gold: 3, iron: 3 };
+      addLog(
+        state,
+        `🪜 Sunk New Mine Shaft at (${h.id}), restoring its ore pool!`,
+        playerId
+      );
+    }
   }
 
   addLog(
@@ -1024,8 +1436,8 @@ export function canReplenishMine(
   playerId: string,
   hexId: string
 ): { valid: boolean; reason?: string } {
-  if (state.phase !== 'BUILDING') {
-    return { valid: false, reason: 'New mine shafts can only be sunk during the Building Phase' };
+  if (state.phase !== 'PRODUCTION' && state.phase !== 'BUILDING') {
+    return { valid: false, reason: 'New mine shafts can only be sunk during the Production or Building Phase' };
   }
   const player = state.players.find(p => p.id === playerId);
   if (!player?.unlockedTechs?.includes('extra_shafts')) {

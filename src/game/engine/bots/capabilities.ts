@@ -21,6 +21,7 @@ import {
   getHexSideLayout,
   getMatchingBankAcrossRiverEdge,
   getNeighborSideOnHex,
+  getRiverEdgeRoadTargets,
   getTransporterSide,
   getValidEntrySidesFromNeighbor,
   normalizeSideForHex,
@@ -116,8 +117,10 @@ export function getTransporterSideEdgeExits(
     if (!doesSideFlankRiverEdge(state, fromHexId, fromSide, edgeKey)) {
       return [];
     }
-    if (spec.roadOnly && edge.improvement !== 'bridge') {
-      return [];
+    const hasBridgeOrRail = edge.improvement === 'bridge' || Boolean(edge.isRailroad);
+    const bankRoadTargets = getRiverEdgeRoadTargets(state, edge, fromHexId, fromSide);
+    if (spec.roadOnly && !hasBridgeOrRail) {
+      return bankRoadTargets;
     }
     return getValidEntrySidesFromNeighbor(state, fromHexId, fromSide, toHexId);
   }
@@ -708,7 +711,9 @@ export function botBuildRoad(
       return getEdgeKey(ca.q, ca.r, cb.q, cb.r);
     })()
   ];
-  const otherAnchorSide = edge?.isRiver
+  const otherAnchorSide = check.bankPair
+    ? (builderHexId === edge?.hexA ? check.bankPair.hexBSide : check.bankPair.hexASide)
+    : edge?.isRiver
     ? getMatchingBankAcrossRiverEdge(state, builderHexId, builderSide, otherHexId)
     : (getNeighborSideOnHex(state, otherHexId, builderHexId) ?? getBestAccessibleSide(state, otherHexId));
 
@@ -784,7 +789,7 @@ export function botResearchTech(
   transporterId?: string,
   targetSide?: number
 ): boolean {
-  if (state.phase !== 'BUILDING') return false;
+  if (state.phase !== 'PRODUCTION') return false;
   if (!canResearchTech(state, bot.id, hexId, techId, transporterId).valid) return false;
 
   const tr = transporterId ? state.transporters[transporterId] : undefined;

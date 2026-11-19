@@ -28,6 +28,7 @@ import {
   canResearchTech,
   calculateScores,
   createInitialGame,
+  doesSideTouchRoad,
   executeBuildFactory,
   executeBuildRoad,
   executeBuildWonder,
@@ -38,11 +39,18 @@ import {
   executeResearchTech,
   findExistingPlayer,
   getBestAccessibleSide,
+  getDryRoadGeometry,
+  getEligibleResearchSites,
   getGoodsOnSide,
   getHexSideLayout,
   getHexSideVisualAnchor,
+  getLegalResearchUpgrades,
+  getMatchingBankAcrossRiverEdge,
   getNeighborSideOnHex,
   getProductionCargoCandidates,
+  getRiverBankRoadGeometry,
+  getRiverBridgeGeometry,
+  getRiverEdgeBankPairs,
   getTransporterCargoWeight,
   getTransporterSide,
   isHexGameCode,
@@ -58,7 +66,7 @@ import {
 } from './engine';
 import { BuildingType, GameState, GoodType } from './types';
 import { BUILDING_SPECS, TRANSPORTER_SPECS } from './constants';
-import { areHexNeighbors, getEdgeKey, parseHexKey } from './hexMath';
+import { areHexNeighbors, getEdgeKey, getSharedEdgeSegment, hexToPixel, parseHexKey } from './hexMath';
 import {
   ALL_SCENARIOS,
   DEDUPLICATED_DRIVE_SCENARIO_NAMES,
@@ -550,7 +558,15 @@ export function testRoadAndBridgeConstruction(): TestResult {
       addGoodOnSide(state, riverEdge.hexA, bridgeSide, 'boards', 2);
       addGoodOnSide(state, riverEdge.hexA, bridgeSide, 'stone', 2);
 
-      const illegalStoneBridge = canBuildRoad(state, player1.id, riverEdge.hexA, riverEdge.hexB, 'stone', donkey.id);
+      const illegalStoneBridge = canBuildRoad(
+        state,
+        player1.id,
+        riverEdge.hexA,
+        riverEdge.hexB,
+        'stone',
+        donkey.id,
+        { buildType: 'bridge' }
+      );
       if (illegalStoneBridge.valid) {
         throw new Error('River Bridges MUST reject Stone (2 Boards only per official rules)!');
       }
@@ -866,7 +882,7 @@ export function testProductionConversions(): TestResult {
     details.push('✓ Mine draws 1 ore/turn from finite 3G+3I bag and depletes cleanly');
 
     // Verify Specialisation & Enlargement cannot overwrite each other on the same mine, and New Shafts refills depleted mines
-    state.phase = 'BUILDING';
+    state.phase = 'PRODUCTION';
     player1.unlockedTechs = [];
     const home = state.hexes[player1.homeHexId];
     home.goods.goose = 6;
@@ -1169,10 +1185,14 @@ export function testGooseBreedingAndTechUpgrades(): TestResult {
     }
     details.push('✓ Living goose unloaded back to pasture grounds');
 
-    // Research must be rejected outside BUILDING phase
+    // Research must be rejected outside PRODUCTION phase (e.g. MOVEMENT and BUILDING)
     homeHex.goods.paper = 1;
     if (canResearchTech(state, player1.id, player1.homeHexId, 'truck_factory').valid) {
-      throw new Error('Research should be rejected during MOVEMENT phase (BUILDING phase only)!');
+      throw new Error('Research should be rejected during MOVEMENT phase (PRODUCTION phase only)!');
+    }
+    state.phase = 'BUILDING';
+    if (canResearchTech(state, player1.id, player1.homeHexId, 'truck_factory').valid) {
+      throw new Error('Research should be rejected during BUILDING phase (PRODUCTION phase only)!');
     }
     delete homeHex.goods.paper;
 
@@ -1215,7 +1235,7 @@ export function testGooseBreedingAndTechUpgrades(): TestResult {
     pastureHex.goodsBySide = undefined;
     details.push('✓ Goose natural reproduction on pasture verified (only exactly 2 geese breed +1; 1, 3, and 4 do not)');
 
-    // 4. Verify Authentic Technology Research (Requires 2 Geese + 1 Paper)
+    // 4. Verify Authentic Technology Research during PRODUCTION Phase (Requires 2 Geese + 1 Paper)
     state.phase = 'BUILDING';
 
     // Home hex has 2 geese. Initial donkey capacity is 2.
@@ -1232,30 +1252,96 @@ export function testGooseBreedingAndTechUpgrades(): TestResult {
     }
     details.push('✓ Verified factory research prerequisite (Truck Factory blocked before research)');
 
+    // Switch to PRODUCTION Phase for research & selective factory/mine upgrade tests
+    state.phase = 'PRODUCTION';
+
     // B. Attempt research with 2 Geese but NO Paper (must fail)
     const checkResearchNoPaper = canResearchTech(state, player1.id, player1.homeHexId, 'truck_factory');
     if (checkResearchNoPaper.valid) {
       throw new Error('canResearchTech should reject research when paper is missing');
     }
+    if (getEligibleResearchSites(state, player1.id).length !== 0) {
+      throw new Error('getEligibleResearchSites must return empty when paper is missing');
+    }
     details.push('✓ Missing paper rule verified: Research requires both 2 Geese AND 1 Paper');
 
-    // C. Provide 1 Paper on the research site
+    // C. Verify unattended 2 Geese + 1 Paper cannot research AND are removed during Production,
+    //    while attended 2 Geese + 1 Paper survive Production and allow research!
+    const unattendedHex = Object.values(state.hexes).find(
+      h =>
+        h.terrain !== 'water' &&
+        !h.building &&
+        h.id !== player1.homeHexId &&
+        !Object.values(state.transporters).some(t => t.hexId === h.id)
+    );
+    if (!unattendedHex) {
+      throw new Error('Could not find an empty unattended land hex for research test');
+    }
+    unattendedHex.goods = { goose: 2, paper: 1 };
+    unattendedHex.goodsBySide = undefined;
+
+    const checkUnattendedResearch = canResearchTech(state, player1.id, unattendedHex.id, 'truck_factory');
+    if (checkUnattendedResearch.valid) {
+      throw new Error('canResearchTech must reject research when no transporter is on the tile');
+    }
+    if (getEligibleResearchSites(state, player1.id).some(s => s.hexId === unattendedHex.id)) {
+      throw new Error('getEligibleResearchSites must exclude tiles with no attending transporter');
+    }
+
+    // Provide 1 Paper on the attended homeHex (donkey is on homeHex) and run Production
     homeHex.goods.paper = 1;
+    homeHex.goodsBySide = undefined;
+    runProductionPhase(state);
+
+    if ((unattendedHex.goods.goose || 0) !== 0 || (unattendedHex.goods.paper || 0) !== 0) {
+      throw new Error(
+        `Unattended 2 Geese + 1 Paper must be removed during Production, found ${unattendedHex.goods.goose || 0}G / ${unattendedHex.goods.paper || 0}P`
+      );
+    }
+    if ((homeHex.goods.goose || 0) < 2 || (homeHex.goods.paper || 0) < 1) {
+      throw new Error(
+        `Attended 2 Geese + 1 Paper must survive Production when a transporter is present, found ${homeHex.goods.goose || 0}G / ${homeHex.goods.paper || 0}P`
+      );
+    }
+    details.push('✓ Verified transporter requirement: unattended Geese & Paper are removed in Production while attended sets survive');
+
+    // Place 2 Wagon Factories on map to test selective legal upgrades
+    const wagonHexes = Object.values(state.hexes)
+      .filter(h => h.terrain !== 'water' && !h.building && h.id !== player1.homeHexId && h.id !== unattendedHex.id)
+      .slice(0, 2);
+    wagonHexes.forEach((h, i) => {
+      h.building = { id: `b_wf_test_${i}`, type: 'wagonfactory', ownerId: player1.id, builtRound: 1 };
+    });
+
+    const eligibleSites = getEligibleResearchSites(state, player1.id);
+    if (!eligibleSites.some(s => s.hexId === player1.homeHexId)) {
+      throw new Error('Expected attended home hex to be detected by getEligibleResearchSites');
+    }
+    const legalTruckUpgrades = getLegalResearchUpgrades(state, player1.id, 'truck_factory');
+    if (legalTruckUpgrades.length !== 2) {
+      throw new Error(`Expected 2 legal Wagon Factory -> Truck Factory upgrades, found ${legalTruckUpgrades.length}`);
+    }
 
     const checkResearch = canResearchTech(state, player1.id, player1.homeHexId, 'truck_factory');
     if (!checkResearch.valid) {
       throw new Error(`canResearchTech rejected valid truck_factory: ${checkResearch.reason}`);
     }
 
-    const researched = executeResearchTech(state, player1.id, player1.homeHexId, 'truck_factory');
+    // Choose to upgrade ONLY the first Wagon Factory (leaving the second untouched)
+    const researched = executeResearchTech(state, player1.id, player1.homeHexId, 'truck_factory', undefined, [
+      { hexId: wagonHexes[0].id },
+    ]);
     if (!researched) {
       throw new Error('executeResearchTech returned false for truck_factory');
+    }
+    if (wagonHexes[0].building?.type !== 'truckfactory' || wagonHexes[1].building?.type !== 'wagonfactory') {
+      throw new Error('Selective factory upgrade failed: expected 1st Wagon Factory upgraded and 2nd kept');
     }
 
     if (!player1.unlockedTechs?.includes('truck_factory')) {
       throw new Error('Player unlockedTechs does not contain truck_factory');
     }
-    details.push('✓ Researched "Steam Truck Factory" technology using 2 Geese + 1 Paper');
+    details.push('✓ Researched "Steam Truck Factory" during Production Phase & selectively upgraded 1 of 2 Wagon Factories');
 
     // Check geese consumed
     if (((homeHex.goods.goose as number | undefined) || 0) !== 0) {
@@ -1267,6 +1353,27 @@ export function testGooseBreedingAndTechUpgrades(): TestResult {
     }
     details.push('✓ Exactly 2 Geese + 1 Paper consumed for technological discovery');
 
+    // Also test specialized_mines choosing 4 Iron on a mine
+    const ironMineHex = Object.values(state.hexes).find(h => h.terrain === 'mountain' && !h.building);
+    if (ironMineHex) {
+      ironMineHex.building = {
+        id: 'b_mine_iron_choice',
+        type: 'mine',
+        ownerId: player1.id,
+        builtRound: 1,
+        minePool: { gold: 3, iron: 3 },
+      };
+      homeHex.goods.goose = 2;
+      homeHex.goods.paper = 1;
+      const specOk = executeResearchTech(state, player1.id, player1.homeHexId, 'specialized_mines', undefined, [
+        { hexId: ironMineHex.id, mineSpecialization: 'iron' },
+      ]);
+      if (!specOk || ironMineHex.building.minePool?.iron !== 4 || ironMineHex.building.minePool?.gold !== 0) {
+        throw new Error('Expected specialized_mines iron selection to set minePool to 4 Iron / 0 Gold');
+      }
+      details.push('✓ Verified Production Phase Specialized Mines dialog choice (4 Iron / 0 Gold)');
+    }
+
     // D. Verify Donkey capacity remains STRICTLY 2 (authentic Splotter tabletop rule)
     const donkeyAfterResearch = state.transporters[donkey.id];
     if (donkeyAfterResearch.capacity !== 2) {
@@ -1274,7 +1381,8 @@ export function testGooseBreedingAndTechUpgrades(): TestResult {
     }
     details.push('✓ Tabletop rule verified: Donkey capacity is permanently fixed at 2 (no upgrades)');
 
-    // E. Verify Truck Factory can now be built after research!
+    // E. Verify Truck Factory can now be built in BUILDING Phase after research!
+    state.phase = 'BUILDING';
     const postResearchBuildCheck = canBuildFactory(state, player1.id, player1.homeHexId, 'truckfactory', donkey.id);
     if (!postResearchBuildCheck.valid) {
       throw new Error(`Truck Factory should now be buildable after research: ${postResearchBuildCheck.reason}`);
@@ -1282,6 +1390,7 @@ export function testGooseBreedingAndTechUpgrades(): TestResult {
     details.push('✓ Technological breakthrough verified: Steam Truck Factory now unlocked for construction');
 
     // Researching already-unlocked tech should fail
+    state.phase = 'PRODUCTION';
     const duplicateCheck = canResearchTech(state, player1.id, player1.homeHexId, 'truck_factory');
     if (duplicateCheck.valid) {
       throw new Error('canResearchTech should reject already-unlocked tech');
@@ -2028,6 +2137,285 @@ function testRiverDividedTileRules(): TestResult {
       throw new Error(`Expected UI side anchors on split hex ${splitHex.id} to be visually separated (>=15px), got ${separation.toFixed(1)}px`);
     }
     details.push(`✓ Rule 5: UI bank anchors separated by ${separation.toFixed(1)}px (${side0.compassLabel} vs ${side1.compassLabel})`);
+
+    // === RULE 6: Land Road (1 Stone) alongside a river between adjacent forest tiles (Mesopotamia NWW <-> WW & NEW) ===
+    const meso = createInitialGame('Meso Riverbank Road Test', 'scenario_mesopotamia', [
+      { name: 'Solo', isAI: false },
+    ], { isSolitaire: true, scenarioId: 'mesopotamia', maxRounds: 20 });
+    const mesoP1 = meso.players[0];
+    const mesoDonkey = Object.values(meso.transporters).find(t => t.ownerId === mesoP1.id)!;
+    // NWW = '0,-1' (forest), WW = '-1,0' (forest), NEW = '1,-1' (forest).
+    // SE bank on NWW ('0,-1') is the side flanking CP ('0,0')!
+    const nwwSeSide = getNeighborSideOnHex(meso, '0,-1', '0,0') ?? 0;
+    const wwSeSide = getMatchingBankAcrossRiverEdge(meso, '0,-1', nwwSeSide, '-1,0');
+    const nwwNwSide = getHexSideLayout(meso, '0,-1').sides.find(s => s.side !== nwwSeSide)?.side ?? 1;
+
+    meso.phase = 'BUILDING';
+    mesoDonkey.hexId = '0,-1';
+    mesoDonkey.side = nwwSeSide;
+    mesoDonkey.cargo = { stone: 2 };
+
+    // Paving Land Road (1 Stone) between NWW ('0,-1') and WW ('-1,0') alongside the river MUST succeed!
+    const bankRoadCheckWW = canBuildRoad(meso, mesoP1.id, '0,-1', '-1,0', 'stone', mesoDonkey.id);
+    if (!bankRoadCheckWW.valid || bankRoadCheckWW.isBridge || bankRoadCheckWW.cost !== 1) {
+      throw new Error(`Expected legal 1-Stone Road alongside river between NWW and WW: ${bankRoadCheckWW.reason}`);
+    }
+    const builtBankRoadWW = executeBuildRoad(meso, mesoP1.id, '0,-1', '-1,0', 'stone', mesoDonkey.id);
+    if (!builtBankRoadWW) {
+      throw new Error('executeBuildRoad failed for Land Road alongside river between NWW and WW');
+    }
+    // Also pave NWW ('0,-1') <-> NEW ('1,-1') alongside the river
+    const builtBankRoadNEW = executeBuildRoad(meso, mesoP1.id, '0,-1', '1,-1', 'stone', mesoDonkey.id);
+    if (!builtBankRoadNEW) {
+      throw new Error('executeBuildRoad failed for Land Road alongside river between NWW and NEW');
+    }
+    if ((mesoDonkey.cargo.stone || 0) !== 0) {
+      throw new Error(`Expected 2 Stone consumed for 2 riverbank roads, remaining: ${mesoDonkey.cargo.stone}`);
+    }
+    details.push('✓ Rule 6a: Built 1-Stone Land Roads between Mesopotamia forest tiles (WW <-> NWW <-> NEW) alongside river');
+
+    // Opposite NW bank remains unbridged and has NO road!
+    if (doesSideTouchRoad(meso, '0,-1', nwwNwSide)) {
+      throw new Error('Opposite unbridged NW bank of NWW should NOT touch the SE riverbank road!');
+    }
+    if (!doesSideTouchRoad(meso, '0,-1', nwwSeSide) || !doesSideTouchRoad(meso, '-1,0', wwSeSide)) {
+      throw new Error('Expected SE banks of NWW and WW to touch the new riverbank road');
+    }
+
+    // Bridge (2 Boards) can still be constructed on the same river border if needed later
+    addGoodOnSide(meso, '0,-1', nwwSeSide, 'boards', 2);
+    const bridgeAfterRoadCheck = canBuildRoad(meso, mesoP1.id, '0,-1', '-1,0', 'boards', mesoDonkey.id, {
+      buildType: 'bridge',
+    });
+    if (!bridgeAfterRoadCheck.valid || !bridgeAfterRoadCheck.isBridge) {
+      throw new Error(`Expected Bridge (2 Boards) to remain buildable after paving a riverbank road: ${bridgeAfterRoadCheck.reason}`);
+    }
+
+    // Production refreshes Donkey on SE riverbank road to roadSpeed = 2, and a Wagon (roadOnly) can drive WW <-> NWW <-> NEW!
+    runProductionPhase(meso);
+    if (mesoDonkey.maxMoves !== 2) {
+      throw new Error(`Expected Donkey on NWW SE bank touching riverbank road to gain 2 moves, got ${mesoDonkey.maxMoves}`);
+    }
+    meso.phase = 'MOVEMENT';
+    const mesoWagonId = 't_meso_wagon_test';
+    meso.transporters[mesoWagonId] = {
+      id: mesoWagonId,
+      ownerId: mesoP1.id,
+      type: 'wagon',
+      hexId: '0,-1',
+      side: nwwSeSide,
+      cargo: {},
+      movesLeft: 3,
+      maxMoves: 3,
+      capacity: 3,
+    };
+    const wagonMoveWW = canMoveTransporter(meso, mesoWagonId, '-1,0', mesoP1.id);
+    if (!wagonMoveWW.valid) {
+      throw new Error(`Wagon should drive along paved riverbank road from NWW to WW: ${wagonMoveWW.reason}`);
+    }
+    executeMoveTransporter(meso, mesoWagonId, '-1,0', mesoP1.id);
+    if (getTransporterSide(meso, meso.transporters[mesoWagonId]) !== wwSeSide) {
+      throw new Error('Expected Wagon moving along riverbank road to land on WW SE bank');
+    }
+    // Wagon on opposite unbridged NW bank of NWW must STILL be blocked from driving to WW
+    const nwWagonId = 't_meso_nw_wagon_test';
+    meso.transporters[nwWagonId] = {
+      id: nwWagonId,
+      ownerId: mesoP1.id,
+      type: 'wagon',
+      hexId: '0,-1',
+      side: nwwNwSide,
+      cargo: {},
+      movesLeft: 3,
+      maxMoves: 3,
+      capacity: 3,
+    };
+    if (canMoveTransporter(meso, nwWagonId, '-1,0', mesoP1.id).valid) {
+      throw new Error('Wagon on unbridged NW bank must NOT be allowed to use SE riverbank road!');
+    }
+    details.push('✓ Rule 6b: Verified Donkey road speed, Wagon travel along riverbank road, and NW opposite-bank isolation');
+
+    // Rule 7: Exhaustive Geometric Water-Barrier & Bridge-Span Verification across ALL map presets
+    // Verifies that:
+    //  a) No dry-border road segment crosses or comes within 7px of any rendered river curve inside either endpoint hex
+    //  b) No riverbank road segment crosses or comes within 7px of any rendered river curve inside either endpoint hex
+    //  c) Every river bridge spans strictly perpendicular across the water at the river midpoint with short bank landings
+    const HEX_R = 60;
+    const MIN_CLEARANCE = 7.0; // river half-width (2.75) + road half-width (4.25) = 7.0px
+
+    const distPointToSeg = (
+      p: { x: number; y: number },
+      a: { x: number; y: number },
+      b: { x: number; y: number }
+    ): number => {
+      const abx = b.x - a.x;
+      const aby = b.y - a.y;
+      const lenSq = abx * abx + aby * aby;
+      if (lenSq < 1e-9) return Math.hypot(p.x - a.x, p.y - a.y);
+      const t = Math.max(0, Math.min(1, ((p.x - a.x) * abx + (p.y - a.y) * aby) / lenSq));
+      return Math.hypot(p.x - (a.x + t * abx), p.y - (a.y + t * aby));
+    };
+
+    const segsIntersect = (
+      a: { x: number; y: number },
+      b: { x: number; y: number },
+      c: { x: number; y: number },
+      d: { x: number; y: number }
+    ): boolean => {
+      const ccw = (p1: { x: number; y: number }, p2: { x: number; y: number }, p3: { x: number; y: number }) =>
+        (p3.y - p1.y) * (p2.x - p1.x) - (p2.y - p1.y) * (p3.x - p1.x);
+      const d1 = ccw(a, b, c);
+      const d2 = ccw(a, b, d);
+      const d3 = ccw(c, d, a);
+      const d4 = ccw(c, d, b);
+      return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+    };
+
+    const distSegToSeg = (
+      a: { x: number; y: number },
+      b: { x: number; y: number },
+      c: { x: number; y: number },
+      d: { x: number; y: number }
+    ): number => {
+      if (segsIntersect(a, b, c, d)) return 0;
+      return Math.min(
+        distPointToSeg(a, c, d),
+        distPointToSeg(b, c, d),
+        distPointToSeg(c, a, b),
+        distPointToSeg(d, a, b)
+      );
+    };
+
+    const getTileRiverPolylines = (
+      st: GameState,
+      hexId: string
+    ): Array<Array<{ x: number; y: number }>> => {
+      const hex = st.hexes[hexId];
+      if (!hex) return [];
+      const inc = Object.values(st.edges).filter(e => e.isRiver && (e.hexA === hexId || e.hexB === hexId));
+      if (inc.length === 0) return [];
+      const orient = st.hexOrientation || 'pointy';
+      const center = hexToPixel(hex.q, hex.r, HEX_R, orient);
+      const mids = inc.map(re => {
+        const otherKey = re.hexA === hexId ? re.hexB : re.hexA;
+        const oc = parseHexKey(otherKey);
+        const seg = getSharedEdgeSegment(hex.q, hex.r, oc.q, oc.r, HEX_R, orient);
+        return { x: seg.midX, y: seg.midY };
+      });
+      if (mids.length === 1) {
+        return [[center, mids[0]]];
+      }
+      if (mids.length === 2) {
+        const samples: Array<{ x: number; y: number }> = [];
+        const STEPS = 20;
+        for (let i = 0; i <= STEPS; i++) {
+          const t = i / STEPS;
+          const omt = 1 - t;
+          samples.push({
+            x: omt * omt * mids[0].x + 2 * omt * t * center.x + t * t * mids[1].x,
+            y: omt * omt * mids[0].y + 2 * omt * t * center.y + t * t * mids[1].y,
+          });
+        }
+        return [samples];
+      }
+      return mids.map(m => [m, center]);
+    };
+
+    const minDistBetweenPolylines = (
+      p1: Array<{ x: number; y: number }>,
+      p2: Array<{ x: number; y: number }>
+    ): number => {
+      let minD = Infinity;
+      for (let i = 0; i < p1.length - 1; i++) {
+        for (let j = 0; j < p2.length - 1; j++) {
+          const d = distSegToSeg(p1[i], p1[i + 1], p2[j], p2[j + 1]);
+          if (d < minD) minD = d;
+        }
+      }
+      return minD;
+    };
+
+    let checkedDryRoads = 0;
+    let checkedBankRoads = 0;
+    let checkedBridges = 0;
+    let worstRoadClearance = Infinity;
+
+    for (const preset of Object.values(MAP_PRESETS)) {
+      if (!preset.riverEdges || preset.riverEdges.length === 0) continue;
+      const st = createInitialGame(`Geom ${preset.id}`, preset.id, [{ name: 'Tester', isAI: false }]);
+      const orient = st.hexOrientation || 'pointy';
+      const riverCache: Record<string, Array<Array<{ x: number; y: number }>>> = {};
+      const getRivers = (hId: string) => {
+        if (!riverCache[hId]) riverCache[hId] = getTileRiverPolylines(st, hId);
+        return riverCache[hId];
+      };
+
+      for (const edge of Object.values(st.edges)) {
+        const hA = st.hexes[edge.hexA];
+        const hB = st.hexes[edge.hexB];
+        if (!hA || !hB || hA.terrain === 'water' || hB.terrain === 'water') continue;
+
+        const tileRivers = [...getRivers(edge.hexA), ...getRivers(edge.hexB)];
+
+        if (!edge.isRiver) {
+          const geom = getDryRoadGeometry(st, edge, HEX_R);
+          checkedDryRoads++;
+          for (const riverLine of tileRivers) {
+            const d = minDistBetweenPolylines(geom.points, riverLine);
+            if (d < worstRoadClearance) worstRoadClearance = d;
+            if (d <= MIN_CLEARANCE) {
+              throw new Error(
+                `Dry road on ${preset.id} edge ${edge.id} violates water barrier clearance: ${d.toFixed(2)}px <= ${MIN_CLEARANCE}px`
+              );
+            }
+          }
+        } else {
+          // Verify bridge geometry: short, strictly perpendicular across the river at midpoint
+          const bGeom = getRiverBridgeGeometry(st, edge, HEX_R);
+          checkedBridges++;
+          const spanLen = Math.hypot(bGeom.end.x - bGeom.start.x, bGeom.end.y - bGeom.start.y);
+          if (spanLen < 14 || spanLen > 32) {
+            throw new Error(
+              `Bridge on ${preset.id} edge ${edge.id} span ${spanLen.toFixed(2)}px should only span water + small bank margin (14..32px)`
+            );
+          }
+          const bDirX = (bGeom.end.x - bGeom.start.x) / spanLen;
+          const bDirY = (bGeom.end.y - bGeom.start.y) / spanLen;
+          const dot = Math.abs(bDirX * bGeom.riverDir.x + bDirY * bGeom.riverDir.y);
+          if (dot > 1e-6) {
+            throw new Error(`Bridge on ${preset.id} edge ${edge.id} is not perpendicular to river (dot=${dot})`);
+          }
+          const cA = hexToPixel(hA.q, hA.r, HEX_R, orient);
+          const cB = hexToPixel(hB.q, hB.r, HEX_R, orient);
+          const expectedMidX = (cA.x + cB.x) / 2;
+          const expectedMidY = (cA.y + cB.y) / 2;
+          const actualMidX = (bGeom.start.x + bGeom.end.x) / 2;
+          const actualMidY = (bGeom.start.y + bGeom.end.y) / 2;
+          if (Math.hypot(actualMidX - expectedMidX, actualMidY - expectedMidY) > 1e-4) {
+            throw new Error(`Bridge on ${preset.id} edge ${edge.id} is not centered on river crossing`);
+          }
+
+          // Verify every riverbank road stays clear of water barriers
+          const bankPairs = getRiverEdgeBankPairs(st, edge);
+          bankPairs.forEach((pair, pIdx) => {
+            const geom = getRiverBankRoadGeometry(st, edge, pair, HEX_R, pIdx);
+            checkedBankRoads++;
+            for (const riverLine of tileRivers) {
+              const d = minDistBetweenPolylines(geom.points, riverLine);
+              if (d < worstRoadClearance) worstRoadClearance = d;
+              if (d <= MIN_CLEARANCE) {
+                throw new Error(
+                  `Riverbank road on ${preset.id} edge ${edge.id} (pair ${pair.hexASide}->${pair.hexBSide}) violates water barrier clearance: ${d.toFixed(2)}px <= ${MIN_CLEARANCE}px`
+                );
+              }
+            }
+          });
+        }
+      }
+    }
+    details.push(
+      `✓ Rule 7: Audited ${checkedDryRoads} dry roads, ${checkedBankRoads} riverbank roads, & ${checkedBridges} perpendicular river bridges across all river presets (min water clearance ${worstRoadClearance.toFixed(1)}px > ${MIN_CLEARANCE}px)`
+    );
 
     return {
       id: 'river_divided_tile_rules',

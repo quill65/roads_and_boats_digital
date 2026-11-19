@@ -8,9 +8,11 @@ import {
   GameAction,
   GameState,
   GoodType,
+  ResearchUpgradeSelection,
 } from './game/types';
 import {
   canDeleteMatch,
+  getEligibleResearchSites,
   getProductionCargoCandidates,
   TransporterProductionCandidate,
   willAdvanceFromWonderRunProduction,
@@ -22,14 +24,13 @@ import { TransporterCargoModal } from './components/TransporterCargoModal';
 import { BuildMenuModal } from './components/BuildMenuModal';
 import { WonderPyramidModal } from './components/WonderPyramidModal';
 import { ProductionCargoPromptModal } from './components/ProductionCargoPromptModal';
+import { ProductionResearchModal } from './components/ProductionResearchModal';
 import { AlmanacModal } from './components/AlmanacModal';
 import { PlayerAidModal } from './components/PlayerAidModal';
 import { TutorialDrawer } from './components/TutorialDrawer';
 import { MultiplayerLobby } from './components/MultiplayerLobby';
 import { RevertHistoryDrawer } from './components/RevertHistoryDrawer';
-import { TestSimulationModal } from './components/TestSimulationModal';
 import { SolitaireModal } from './components/SolitaireModal';
-import { DriveRulesComparatorModal } from './components/DriveRulesComparatorModal';
 import { SolitaireScenario } from './game/scenarios';
 import { sounds } from './utils/soundEffects';
 import {
@@ -60,8 +61,7 @@ export default function App() {
   const [showTutorial, setShowTutorial] = useState(false);
   const [showSolitaireModal, setShowSolitaireModal] = useState(false);
   const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
-  const [showTestSuite, setShowTestSuite] = useState(false);
-  const [showDriveRulesModal, setShowDriveRulesModal] = useState(false);
+  const [showProductionResearchModal, setShowProductionResearchModal] = useState(false);
   const [productionCargoPrompt, setProductionCargoPrompt] = useState<TransporterProductionCandidate[] | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [originalMatchId, setOriginalMatchId] = useState<string | null>(null);
@@ -73,6 +73,7 @@ export default function App() {
   const eventSourceRef = useRef<EventSource | null>(null);
   const isObservingRef = useRef(false);
   isObservingRef.current = isObserving;
+  const lastResearchPromptKeyRef = useRef<string | null>(null);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -213,7 +214,15 @@ export default function App() {
     }
   };
 
-  const handleBuildRoadEdge = async (hexA: string, hexB: string) => {
+  const handleBuildRoadEdge = async (
+    hexA: string,
+    hexB: string,
+    options?: {
+      material?: 'boards' | 'stone';
+      buildType?: 'road' | 'bridge';
+      bankPair?: { hexASide: number; hexBSide: number };
+    }
+  ) => {
     if (!selectedTransporterId) {
       showToast('Please select a builder transporter first');
       return;
@@ -226,9 +235,14 @@ export default function App() {
     const coordB = parseHexKey(hexB);
     const edgeKey = getEdgeKey(coordA.q, coordA.r, coordB.q, coordB.r);
     const edge = gameState.edges[edgeKey];
-    const isBridge = Boolean(edge?.isRiver);
+    const isBridge =
+      options?.buildType !== undefined
+        ? options.buildType === 'bridge'
+        : options?.material
+        ? options.material === 'boards'
+        : Boolean(edge?.isRiver);
     // Official rules: Bridges require strictly 2 Boards; Land Roads require strictly 1 Stone
-    const material: 'boards' | 'stone' = isBridge ? 'boards' : 'stone';
+    const material: 'boards' | 'stone' = options?.material || (isBridge ? 'boards' : 'stone');
 
     const success = await sendGameAction({
       type: 'BUILD_ROAD',
@@ -236,12 +250,20 @@ export default function App() {
       hexB,
       material,
       transporterId: selectedTransporterId,
+      buildType: isBridge ? 'bridge' : 'road',
+      bankPair: options?.bankPair,
     });
 
     if (success) {
       sounds.playBuild();
       setBuildMode('none');
-      showToast(isBridge ? 'Bridge constructed (2 Boards)!' : 'Road paved (1 Stone)!');
+      showToast(
+        isBridge
+          ? 'Bridge constructed (2 Boards)!'
+          : edge?.isRiver
+          ? 'Road paved alongside river (1 Stone)!'
+          : 'Road paved (1 Stone)!'
+      );
     }
   };
 
@@ -266,13 +288,15 @@ export default function App() {
   const handleResearchTech = async (
     hexId: string,
     techId: string,
-    transporterId: string
+    transporterId?: string,
+    upgrades?: ResearchUpgradeSelection[]
   ) => {
     const success = await sendGameAction({
       type: 'RESEARCH_TECH',
       hexId,
       techId,
       transporterId,
+      upgrades,
     });
 
     if (success) {
@@ -281,8 +305,14 @@ export default function App() {
       } else {
         sounds.playBuild();
       }
-      showToast('Technological Breakthrough! (2 Geese + 1 Paper consumed)');
+      const upgradeCount = upgrades?.length || 0;
+      showToast(
+        upgradeCount > 0
+          ? `Technological Breakthrough! Applied ${upgradeCount} upgrade${upgradeCount === 1 ? '' : 's'} (2 Geese + 1 Paper consumed).`
+          : 'Technological Breakthrough! (2 Geese + 1 Paper consumed)'
+      );
     }
+    return success;
   };
 
   const handleReplenishMine = async (hexId: string, transporterId: string) => {
@@ -759,6 +789,42 @@ export default function App() {
       ? gameState.transporters[selectedTransporterId] || null
       : null;
 
+  const activePlayerObj = gameState?.players.find(p => p.id === activePlayerId);
+  const hasProductionResearchAvailable = Boolean(
+    screen === 'game' &&
+      gameState &&
+      gameState.phase === 'PRODUCTION' &&
+      activePlayerId &&
+      !isObserving &&
+      !activePlayerObj?.resigned &&
+      getEligibleResearchSites(gameState, activePlayerId).length > 0
+  );
+
+  // Automatically show the Research & Legal Upgrades dialog whenever a Production Phase starts
+  // and the active player meets research conditions (2 Geese + 1 Paper + unresearched tech)
+  useEffect(() => {
+    if (screen !== 'game' || !gameState || gameState.phase !== 'PRODUCTION') {
+      setShowProductionResearchModal(false);
+      return;
+    }
+    if (!hasProductionResearchAvailable) {
+      setShowProductionResearchModal(false);
+      return;
+    }
+    const promptKey = `${gameState.id}:${gameState.round}:${activePlayerId}`;
+    if (lastResearchPromptKeyRef.current !== promptKey) {
+      lastResearchPromptKeyRef.current = promptKey;
+      setShowProductionResearchModal(true);
+    }
+  }, [
+    screen,
+    gameState?.id,
+    gameState?.round,
+    gameState?.phase,
+    activePlayerId,
+    hasProductionResearchAvailable,
+  ]);
+
   // Render Lobby screen if not in a game
   if (screen === 'lobby' || !gameState) {
     return (
@@ -773,8 +839,7 @@ export default function App() {
           onStartTutorial={handleStartTutorial}
           onOpenPlayerAid={() => setShowPlayerAidModal(true)}
           onOpenSolitaire={() => setShowSolitaireModal(true)}
-          onOpenTestSuite={() => setShowTestSuite(true)}
-          onOpenDriveRules={() => setShowDriveRulesModal(true)}
+          onOpenGameRules={() => setShowAlmanacModal(true)}
         />
         {toastMessage && (
           <div className="fixed top-16 sm:top-20 left-1/2 -translate-x-1/2 z-50 max-w-[calc(100vw-1.5rem)] w-max px-4 sm:px-5 py-2.5 rounded-xl bg-slate-900/95 border border-amber-500/70 text-amber-200 text-xs font-semibold shadow-2xl backdrop-blur-md animate-fade-in flex items-center gap-2 text-center">
@@ -785,11 +850,8 @@ export default function App() {
         {showPlayerAidModal && (
           <PlayerAidModal onClose={() => setShowPlayerAidModal(false)} />
         )}
-        {showTestSuite && (
-          <TestSimulationModal onClose={() => setShowTestSuite(false)} />
-        )}
-        {showDriveRulesModal && (
-          <DriveRulesComparatorModal onClose={() => setShowDriveRulesModal(false)} />
+        {showAlmanacModal && (
+          <AlmanacModal onClose={() => setShowAlmanacModal(false)} />
         )}
         <SolitaireModal
           isOpen={showSolitaireModal}
@@ -830,7 +892,6 @@ export default function App() {
         onOpenPlayerAid={() => setShowPlayerAidModal(true)}
         onOpenSolitaire={() => setShowSolitaireModal(true)}
         onOpenHistory={() => setShowHistoryDrawer(true)}
-        onOpenTestSuite={() => setShowTestSuite(true)}
         onUndo={handleUndoMove}
         onRedo={handleRedoMove}
         onLeaveMatch={() => {
@@ -849,6 +910,8 @@ export default function App() {
         }
         soundEnabled={soundEnabled}
         onToggleSound={handleToggleSound}
+        hasResearchAvailable={hasProductionResearchAvailable}
+        onOpenResearch={() => setShowProductionResearchModal(true)}
         originalMatchId={originalMatchId}
         onReturnToOriginalMatch={handleReturnToOriginalMatch}
       />
@@ -886,7 +949,7 @@ export default function App() {
 
       {/* Toast Notification Banner */}
       {toastMessage && (
-        <div className="absolute top-16 sm:top-20 left-1/2 -translate-x-1/2 z-50 max-w-[calc(100vw-1.5rem)] w-max px-4 sm:px-5 py-2.5 rounded-xl bg-slate-900/95 border border-amber-500/70 text-amber-200 text-xs font-semibold shadow-2xl backdrop-blur-md animate-fade-in flex items-center gap-2 text-center">
+        <div className="absolute top-28 sm:top-24 left-1/2 -translate-x-1/2 z-50 max-w-[calc(100vw-1.5rem)] w-max px-4 sm:px-5 py-2.5 rounded-xl bg-slate-900/95 border border-amber-500/70 text-amber-200 text-xs font-semibold shadow-2xl backdrop-blur-md animate-fade-in flex items-center gap-2 text-center">
           <span className="shrink-0">⚠️</span>
           <span className="leading-snug">{toastMessage}</span>
         </div>
@@ -913,8 +976,17 @@ export default function App() {
           onSelectTransporter={tId => setSelectedTransporterId(tId)}
           onBuildFactory={handleBuildFactory}
           onSelectRoadMode={() => setBuildMode('road')}
-          onResearchTech={handleResearchTech}
           onReplenishMine={handleReplenishMine}
+        />
+      )}
+
+      {/* Production Phase Research & Legal Upgrades Modal */}
+      {showProductionResearchModal && hasProductionResearchAvailable && (
+        <ProductionResearchModal
+          gameState={gameState}
+          activePlayerId={activePlayerId}
+          onClose={() => setShowProductionResearchModal(false)}
+          onConductResearch={handleResearchTech}
         />
       )}
 
@@ -966,11 +1038,6 @@ export default function App() {
         onRedo={handleRedoMove}
         onRevertToIndex={handleRevertToHistory}
       />
-
-      {/* Automated Game Action Test Simulator */}
-      {showTestSuite && (
-        <TestSimulationModal onClose={() => setShowTestSuite(false)} />
-      )}
 
       {/* Pre-Made Scenarios Selection Modal */}
       <SolitaireModal

@@ -45,6 +45,11 @@ export {
   executeDropGoods,
 } from './engine/movement';
 
+export type {
+  BuildRoadOptions,
+  LegalResearchUpgrade,
+  ResearchSiteCandidate,
+} from './engine/building';
 export {
   calculateWonderContributionCost,
   canBuildRoad,
@@ -55,6 +60,8 @@ export {
   executeBuildWonder,
   canResearchTech,
   executeResearchTech,
+  getEligibleResearchSites,
+  getLegalResearchUpgrades,
   canReplenishMine,
   executeReplenishMine,
   canBuildRaft,
@@ -75,13 +82,16 @@ export { BOT_PROFILES, DEFAULT_BOT_PROFILE_ID, getBotProfile, runBotTurn } from 
 export {
   addGoodOnSide,
   areSidesConnectedByBridgeOnHex,
+  buildRoundedPolylinePath,
   doesSideFlankRiverEdge,
   doesSideTouchRoad,
+  edgeHasBankRoadPair,
   ensureHexGoodsBySide,
   getAccessibleSidesOnHex,
   getBestAccessibleSide,
   getBuildingSide,
   getCompassLabel,
+  getDryRoadGeometry,
   getEntrySideFromNeighbor,
   getValidEntrySidesFromNeighbor,
   getGoodsOnSide,
@@ -90,6 +100,12 @@ export {
   getInteractableSidesForTransporter,
   getMatchingBankAcrossRiverEdge,
   getNeighborSideOnHex,
+  getRiverBankNormal,
+  getRiverBankRoadGeometry,
+  getRiverBridgeGeometry,
+  getRiverEdgeBankPairs,
+  getRiverEdgeRoadTargets,
+  getRoadHubPoint,
   getTransporterSide,
   getWatercraftVisualOffset,
   isHexDividedByUnbridgedRiver,

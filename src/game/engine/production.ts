@@ -728,6 +728,89 @@ export function runProductionPhase(state: GameState, options?: ProductionPhaseOp
     }
   });
 
+  // 4.5. Remove Unattended Geese & Paper (2 Geese + 1 Paper with no transporter on accessible side)
+  const reqResearchGeese = ROADS_AND_BOATS_RULES.research.standardCost.goose;
+  const reqResearchPaper = ROADS_AND_BOATS_RULES.research.standardCost.paper;
+  Object.values(state.hexes).forEach(hex => {
+    ensureHexGoodsBySide(state, hex);
+    for (const groupSides of getDisjointSideGroups(state, hex.id)) {
+      const groupSet = new Set(groupSides);
+      const hasAttendingTransporter = Object.values(state.transporters).some(
+        t => t.hexId === hex.id && isTransporterAccessibleForFactory(state, t, groupSet)
+      );
+      if (hasAttendingTransporter) continue;
+
+      const geeseOnSide = getAvailableOnSides(state, hex.id, groupSides, 'goose');
+      const paperOnSide = getAvailableOnSides(state, hex.id, groupSides, 'paper');
+      const unattendedSets = Math.min(
+        Math.floor(geeseOnSide / reqResearchGeese),
+        Math.floor(paperOnSide / reqResearchPaper)
+      );
+      if (unattendedSets <= 0) continue;
+
+      const geeseToRemove = unattendedSets * reqResearchGeese;
+      const paperToRemove = unattendedSets * reqResearchPaper;
+
+      let remGeese = geeseToRemove;
+      for (const s of groupSides) {
+        if (remGeese <= 0) break;
+        const avail = getGoodsOnSide(state, hex.id, s).goose || 0;
+        if (avail > 0) {
+          const take = Math.min(avail, remGeese);
+          removeGoodOnSide(state, hex.id, s, 'goose', take);
+          remGeese -= take;
+        }
+      }
+
+      let remPaper = paperToRemove;
+      for (const s of groupSides) {
+        if (remPaper <= 0) break;
+        const avail = getGoodsOnSide(state, hex.id, s).paper || 0;
+        if (avail > 0) {
+          const take = Math.min(avail, remPaper);
+          removeGoodOnSide(state, hex.id, s, 'paper', take);
+          remPaper -= take;
+        }
+      }
+
+      state.players.forEach(p => {
+        if (!p.isAI) return;
+        if (p.aiOwnedGoodsBySide?.[hex.id]) {
+          let changed = false;
+          for (const s of groupSides) {
+            const aiSide = p.aiOwnedGoodsBySide[hex.id][s];
+            if (!aiSide) continue;
+            const groundSide = getGoodsOnSide(state, hex.id, s);
+            (['goose', 'paper'] as const).forEach(good => {
+              const cur = aiSide[good] || 0;
+              const maxAllowed = groundSide[good] || 0;
+              if (cur > maxAllowed) {
+                if (maxAllowed <= 0) delete aiSide[good];
+                else aiSide[good] = maxAllowed;
+                changed = true;
+              }
+            });
+          }
+          if (changed) syncAiFlatGoodsForHex(p, hex.id);
+        } else if (p.aiOwnedGoods?.[hex.id]) {
+          (['goose', 'paper'] as const).forEach(good => {
+            const cur = p.aiOwnedGoods![hex.id][good] || 0;
+            const maxAllowed = hex.goods[good] || 0;
+            if (cur > maxAllowed) {
+              if (maxAllowed <= 0) delete p.aiOwnedGoods![hex.id][good];
+              else p.aiOwnedGoods![hex.id][good] = maxAllowed;
+            }
+          });
+        }
+      });
+
+      addLog(
+        state,
+        `🪿📜 Unattended geese & paper on (${hex.id}) without a transporter: ${geeseToRemove} Geese and ${paperToRemove} Paper were removed from the game.`
+      );
+    }
+  });
+
   // 5. Reset Transporter Movement (road-speed applies only if a road/bridge touches transporter's side)
   Object.values(state.transporters).forEach(t => {
     const spec = TRANSPORTER_SPECS[t.type];

@@ -88,9 +88,9 @@ export const AlmanacModal: React.FC<AlmanacModalProps> = ({ onClose }) => {
               <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
                 <h4 className="text-sm font-bold text-amber-300">4. Round Structure</h4>
                 <ol className="list-decimal list-inside space-y-1 text-slate-300">
-                  <li><strong className="text-white">Production:</strong> Primary extractors harvest timber/clay/stone/ore (Mines draw 1 ore counter per turn from a finite bag); secondary factories convert raw goods; two donkeys alone on empty pasture reproduce naturally.</li>
+                  <li><strong className="text-white">Production:</strong> Primary extractors harvest timber/clay/stone/ore (Mines draw 1 ore counter per turn from a finite bag); secondary factories convert raw goods; two donkeys alone on empty pasture reproduce naturally; conduct Research (2 Geese + 1 Paper with a transporter present on the tile) and apply legal factory/mine upgrades — unattended Geese &amp; Paper are removed from the game.</li>
                   <li><strong className="text-white">Movement:</strong> Command your donkeys, wagons, and watercraft. Pick up and drop goods at your location (Movement Phase only).</li>
-                  <li><strong className="text-white">Building:</strong> Construct roads (1 Stone), bridges (2 Boards), factories, and conduct Research (2 Geese + 1 Paper).</li>
+                  <li><strong className="text-white">Building:</strong> Construct roads (1 Stone), bridges (2 Boards), and factories.</li>
                   <li><strong className="text-white">Wonder:</strong> Spend any goods on your home (starting) tile to place Wonder bricks (1 good first brick, escalating per brick in a round & after brick #17). If no player lays a brick, a Neutral brick is placed!</li>
                 </ol>
               </div>

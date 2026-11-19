@@ -8,7 +8,6 @@ import { BUILDING_SPECS, GOOD_DETAILS, TECH_UPGRADES, TRANSPORTER_SPECS } from '
 import {
   canBuildFactory,
   canReplenishMine,
-  canResearchTech,
   getAccessibleSiteMaterials,
   getHexSideLayout,
   getTransporterSide,
@@ -23,7 +22,6 @@ interface BuildMenuModalProps {
   onSelectTransporter?: (transporterId: string) => void;
   onBuildFactory: (hexId: string, buildingType: BuildingType, transporterId: string) => void;
   onSelectRoadMode: () => void;
-  onResearchTech?: (hexId: string, techId: string, transporterId: string) => void;
   onReplenishMine?: (hexId: string, transporterId: string) => void;
 }
 
@@ -35,7 +33,6 @@ export const BuildMenuModal: React.FC<BuildMenuModalProps> = ({
   onSelectTransporter,
   onBuildFactory,
   onSelectRoadMode,
-  onResearchTech,
   onReplenishMine,
 }) => {
   const hex = gameState.hexes[selectedTransporter.hexId];
@@ -218,11 +215,11 @@ export const BuildMenuModal: React.FC<BuildMenuModalProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 text-xs border-t border-slate-800/80">
                   <div className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800">
                     <p className="font-semibold text-slate-200">Land Road Cost</p>
-                    <p className="text-slate-400 mt-1">1 Stone strictly (Boards cannot build roads)</p>
+                    <p className="text-slate-400 mt-1">1 Stone strictly (dry borders or alongside a riverbank)</p>
                   </div>
                   <div className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800">
                     <p className="font-semibold text-slate-200">River Bridge Cost</p>
-                    <p className="text-slate-400 mt-1">2 Boards strictly across river edge (Stone cannot build bridges)</p>
+                    <p className="text-slate-400 mt-1">2 Boards strictly across a river (connects opposite banks)</p>
                   </div>
                 </div>
               </div>
@@ -380,15 +377,17 @@ export const BuildMenuModal: React.FC<BuildMenuModalProps> = ({
           )}
 
           {activeCategory === 'research' && (
-            /* Academic Research Tab */
+            /* Academic Research Reference Tab (Conducted during Production Phase) */
             <div className="flex flex-col gap-4">
               <div className="p-4 rounded-xl bg-slate-950/70 border border-sky-800/60 flex flex-col gap-3">
                 <div className="flex items-center gap-3">
                   <span className="text-3xl">🧪</span>
                   <div>
-                    <h4 className="text-base font-bold text-white">Technological Research</h4>
+                    <h4 className="text-base font-bold text-white">Technological Research (Production Phase)</h4>
                     <p className="text-xs text-slate-300">
-                      Official Splotter Rule: Research consumes exactly <strong className="text-amber-300">2 Geese + 1 Paper</strong> on your accessible side of this hex.
+                      Research takes place during the <strong className="text-sky-300">Production Phase</strong>. Keep a{' '}
+                      <strong className="text-white">transporter</strong> on the same accessible hex side with{' '}
+                      <strong className="text-amber-300">2 Geese + 1 Paper</strong> when Production begins to open the Research &amp; Upgrade dialog. Unattended Geese &amp; Paper are removed from the game during Production.
                     </p>
                   </div>
                 </div>
@@ -396,7 +395,7 @@ export const BuildMenuModal: React.FC<BuildMenuModalProps> = ({
                 {/* Site inventory for Geese and Paper */}
                 <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
                   <span className="text-slate-400">
-                    Research Materials on Accessible Side{layout.isSplit && builderBank ? ` (${builderBank.compassLabel})` : ''}:
+                    Materials currently on this side{layout.isSplit && builderBank ? ` (${builderBank.compassLabel})` : ''}:
                   </span>
                   <div className="flex flex-wrap items-center gap-3 sm:gap-4">
                     <span className={`font-mono ${geeseMat.totalAvailable >= 2 ? 'text-emerald-400 font-bold' : 'text-slate-400'}`}>
@@ -409,11 +408,10 @@ export const BuildMenuModal: React.FC<BuildMenuModalProps> = ({
                 </div>
               </div>
 
-              {/* Technologies List */}
+              {/* Technologies Status List */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {Object.values(TECH_UPGRADES).map(tech => {
                   const isUnlocked = player?.unlockedTechs?.includes(tech.id);
-                  const check = canResearchTech(gameState, activePlayerId, hex.id, tech.id, selectedTransporter.id);
 
                   return (
                     <div
@@ -421,9 +419,7 @@ export const BuildMenuModal: React.FC<BuildMenuModalProps> = ({
                       className={`p-3.5 rounded-xl border flex flex-col justify-between transition-all ${
                         isUnlocked
                           ? 'bg-emerald-950/30 border-emerald-800/60'
-                          : check.valid
-                          ? 'bg-slate-800/80 border-sky-500/60 hover:border-sky-400'
-                          : 'bg-slate-950/40 border-slate-800/60 opacity-70'
+                          : 'bg-slate-950/40 border-slate-800/60 opacity-80'
                       }`}
                     >
                       <div className="flex flex-col gap-1.5">
@@ -438,42 +434,13 @@ export const BuildMenuModal: React.FC<BuildMenuModalProps> = ({
                             </span>
                           ) : (
                             <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-slate-900 text-sky-300 border border-sky-800/60">
-                              2 Geese + 1 Paper
+                              Production Phase
                             </span>
                           )}
                         </div>
 
                         <p className="text-xs text-slate-300">{tech.description}</p>
                         <p className="text-[11px] text-amber-300 font-medium">✨ {tech.benefit}</p>
-                      </div>
-
-                      <div className="mt-3 pt-2 border-t border-slate-700/50 flex items-center justify-between gap-2">
-                        {isUnlocked ? (
-                          <span className="text-[11px] text-emerald-400 font-semibold">Active Breakthrough</span>
-                        ) : !check.valid ? (
-                          <span className="text-[11px] text-red-400 leading-snug flex-1" title={check.reason}>
-                            {check.reason}
-                          </span>
-                        ) : (
-                          <span className="text-[11px] text-sky-400 font-semibold">Ready to Discover</span>
-                        )}
-
-                        {!isUnlocked && (
-                          <button
-                            disabled={!check.valid}
-                            onClick={() => {
-                              onResearchTech?.(hex.id, tech.id, selectedTransporter.id);
-                              onClose();
-                            }}
-                            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors shrink-0 ${
-                              check.valid
-                                ? 'bg-sky-400 hover:bg-sky-300 text-slate-950 shadow'
-                                : 'bg-slate-800 text-slate-600 cursor-not-allowed'
-                            }`}
-                          >
-                            Research
-                          </button>
-                        )}
                       </div>
                     </div>
                   );

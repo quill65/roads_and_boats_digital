@@ -188,17 +188,17 @@ export const TUTORIAL_LESSONS: TutorialStep[] = [
     objective: 'Pave roads along hex edges and upgrade your transport capacity with Wagons.',
     explanation: [
       'Without roads, your realm operates at a crawl. Off-road donkeys only travel 1 hex per round, and heavy Wagons cannot move at all!',
-      'During the Building Phase, a transporter with 1 Stone on an adjacent hex can pave a Land Road along any shared land border (Boards cannot build land roads).',
-      'If the border contains a river, you must construct a Bridge instead, which strictly costs 2 Boards (Stone cannot build bridges).',
+      'During the Building Phase, a transporter with 1 Stone on an adjacent hex can pave a Land Road along a dry border or alongside a riverbank on the same side of the river (Boards cannot build roads).',
+      'To cross over a river to the opposite bank, you must construct a Bridge instead, which strictly costs 2 Boards (Stone cannot build bridges).',
       'Once roads are paved, donkeys can use 2 road moves per turn. Furthermore, you can construct a Wagon Factory (2 Boards, 1 Stone) to build Wagons (cap 3, speed 3, strictly road-only)!',
     ],
     tacticalAdvice: [
-      'Build a Quarry on Rock early so you can pave 1-Stone trunk roads connecting factories.',
-      'Save Boards for Bridges (2 Boards) and construction!',
+      'Build a Quarry on Rock early so you can pave 1-Stone trunk roads connecting factories—including along riverbanks.',
+      'Save Boards for Bridges (2 Boards) when you need to cross a river!',
     ],
     keyRules: [
-      'Land Road cost: Strictly 1 Stone per edge.',
-      'River Bridge cost: Strictly 2 Boards per river edge.',
+      'Land Road cost: Strictly 1 Stone per border (dry border or same-bank alongside a river).',
+      'River Bridge cost: Strictly 2 Boards per river border to link opposite banks.',
       'Wagons have 3 capacity and 3 speed, and are STRICTLY ROAD-ONLY.',
       'Bridges allow both land units to cross and watercraft to pass beneath.',
     ],

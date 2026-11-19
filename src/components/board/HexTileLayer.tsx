@@ -133,31 +133,6 @@ export const HexTileLayer: React.FC<HexTileLayerProps> = ({
               </g>
             )}
 
-            {isSelected && (
-              <g pointerEvents="none" transform={`translate(${center.x}, ${center.y - hexRadius * 0.72})`}>
-                <rect
-                  x="-44"
-                  y="-11"
-                  width="88"
-                  height="20"
-                  rx="6"
-                  fill="#020617"
-                  fillOpacity="0.95"
-                  stroke="#38bdf8"
-                  strokeWidth="1.5"
-                />
-                <text
-                  textAnchor="middle"
-                  dy="3.5"
-                  fontSize="9"
-                  fill="#38bdf8"
-                  className="font-bold tracking-wider uppercase font-mono"
-                >
-                  {info.name}
-                </text>
-              </g>
-            )}
-
             {isReachable && (
               <g pointerEvents="none" transform={`translate(${center.x}, ${center.y})`}>
                 <circle r="13" fill="#22c55e" fillOpacity="0.4" className="animate-ping" />
