@@ -943,7 +943,56 @@ export function testProductionConversions(): TestResult {
     if (!canReplenishMine(state, player1.id, mineHex.id).valid || !executeReplenishMine(state, player1.id, mineHex.id)) {
       throw new Error('Manual executeReplenishMine failed on depleted mine');
     }
-    details.push('✓ Verified mine Specialisation vs Enlargement exclusion & New Shafts replenishment');
+
+    // Verify player with multiple mine research (both specialized_mines & large_mines) can choose which mine to build
+    const mountainCandidates = Object.values(state.hexes).filter(
+      h => h.terrain === 'mountain' && !h.building
+    );
+    if (mountainCandidates.length >= 2) {
+      const m1 = mountainCandidates[0];
+      const m2 = mountainCandidates[1];
+      state.phase = 'BUILDING';
+      const builderId = Object.values(state.transporters).find(t => t.ownerId === player1.id)!.id;
+      const builder = state.transporters[builderId];
+
+      builder.hexId = m1.id;
+      builder.cargo = { boards: 3, stone: 1 };
+      if (!executeBuildFactory(state, player1.id, m1.id, 'mine', builderId, { mineVariant: 'enlarged' })) {
+        throw new Error('Failed to build chosen Enlarged Mine with multiple mine research');
+      }
+      if (m1.building?.mineVariant !== 'enlarged' || m1.building?.minePool?.gold !== 5 || m1.building?.minePool?.iron !== 5) {
+        throw new Error('Chosen Enlarged Mine did not initialize 5G + 5I pool');
+      }
+
+      builder.hexId = m2.id;
+      builder.cargo = { boards: 3, stone: 1 };
+      if (
+        !executeBuildFactory(state, player1.id, m2.id, 'mine', builderId, {
+          mineVariant: 'specialized',
+          mineSpecialization: 'iron',
+        })
+      ) {
+        throw new Error('Failed to build chosen Specialized Iron Mine with multiple mine research');
+      }
+      if (
+        m2.building?.mineVariant !== 'specialized' ||
+        m2.building?.mineSpecialization !== 'iron' ||
+        m2.building?.minePool?.gold !== 0 ||
+        m2.building?.minePool?.iron !== 4
+      ) {
+        throw new Error('Chosen Specialized Iron Mine did not initialize 0G + 4I pool');
+      }
+
+      // Verify New Shafts preserves Iron specialization when replenishing
+      m2.building.minePool = { gold: 0, iron: 0 };
+      if (!executeReplenishMine(state, player1.id, m2.id)) {
+        throw new Error('Failed to replenish Specialized Iron Mine');
+      }
+      if (m2.building.minePool.iron !== 4 || (m2.building.minePool.gold || 0) !== 0) {
+        throw new Error('New Shafts did not preserve Iron specialization (expected 0G / 4I)');
+      }
+    }
+    details.push('✓ Verified mine Specialisation vs Enlargement exclusion, multi-research mine build choice & New Shafts replenishment');
 
     return {
       id: 'production_conversions',

@@ -533,12 +533,18 @@ export function areAdjacentToWater(state: GameState, hexId: string, side?: numbe
   });
 }
 
+export interface BuildFactoryOptions {
+  mineVariant?: 'default' | 'specialized' | 'enlarged';
+  mineSpecialization?: 'gold' | 'iron';
+}
+
 export function canBuildFactory(
   state: GameState,
   playerId: string,
   hexId: string,
   buildingType: BuildingType,
-  transporterId: string
+  transporterId: string,
+  options?: BuildFactoryOptions
 ): { valid: boolean; reason?: string } {
   if (state.phase !== 'BUILDING') {
     return { valid: false, reason: 'Factories may only be erected during the Building Phase' };
@@ -563,13 +569,29 @@ export function canBuildFactory(
     };
   }
 
+  const player = state.players.find(p => p.id === playerId);
+
   if (spec.requiredTech) {
-    const player = state.players.find(p => p.id === playerId);
     if (!player?.unlockedTechs?.includes(spec.requiredTech)) {
       const techSpec = TECH_UPGRADES[spec.requiredTech];
       return {
         valid: false,
         reason: `Requires researching ${techSpec?.name || spec.requiredTech} first (Cost: 2 Geese + 1 Paper)`,
+      };
+    }
+  }
+
+  if (buildingType === 'mine' && options?.mineVariant) {
+    if (options.mineVariant === 'specialized' && !player?.unlockedTechs?.includes('specialized_mines')) {
+      return {
+        valid: false,
+        reason: 'Requires researching Specialisation (Specialized Mines) first',
+      };
+    }
+    if (options.mineVariant === 'enlarged' && !player?.unlockedTechs?.includes('large_mines')) {
+      return {
+        valid: false,
+        reason: 'Requires researching Enlargement (Enlarged Mines) first',
       };
     }
   }
@@ -620,9 +642,10 @@ export function executeBuildFactory(
   playerId: string,
   hexId: string,
   buildingType: BuildingType,
-  transporterId: string
+  transporterId: string,
+  options?: BuildFactoryOptions
 ): boolean {
-  const check = canBuildFactory(state, playerId, hexId, buildingType, transporterId);
+  const check = canBuildFactory(state, playerId, hexId, buildingType, transporterId, options);
   if (!check.valid) return false;
 
   const hex = state.hexes[hexId];
@@ -650,16 +673,41 @@ export function executeBuildFactory(
   const owner = state.players.find(p => p.id === playerId);
   let initialMinePool: Partial<Record<GoodType, number>> | undefined;
   let initialMineVariant: 'default' | 'specialized' | 'enlarged' | undefined;
+  let initialMineSpec: 'gold' | 'iron' | undefined;
+  let mineLogSuffix = '';
+
   if (buildingType === 'mine') {
-    if (owner?.unlockedTechs?.includes('specialized_mines')) {
-      initialMinePool = { gold: 4, iron: 0 };
-      initialMineVariant = 'specialized';
-    } else if (owner?.unlockedTechs?.includes('large_mines')) {
-      initialMinePool = { gold: 5, iron: 5 };
-      initialMineVariant = 'enlarged';
-    } else {
-      initialMinePool = { gold: 3, iron: 3 };
+    const hasSpecTech = Boolean(owner?.unlockedTechs?.includes('specialized_mines'));
+    const hasLargeTech = Boolean(owner?.unlockedTechs?.includes('large_mines'));
+    const requestedVariant = options?.mineVariant;
+
+    if (requestedVariant === 'default') {
       initialMineVariant = 'default';
+      initialMinePool = { gold: 3, iron: 3 };
+      mineLogSuffix = ' (Standard: 3 Gold + 3 Iron)';
+    } else if (requestedVariant === 'enlarged' && hasLargeTech) {
+      initialMineVariant = 'enlarged';
+      initialMinePool = { gold: 5, iron: 5 };
+      mineLogSuffix = ' (Enlarged: 5 Gold + 5 Iron)';
+    } else if (requestedVariant === 'specialized' && hasSpecTech) {
+      const focus: 'gold' | 'iron' = options?.mineSpecialization === 'iron' ? 'iron' : 'gold';
+      initialMineVariant = 'specialized';
+      initialMineSpec = focus;
+      initialMinePool = focus === 'iron' ? { gold: 0, iron: 4 } : { gold: 4, iron: 0 };
+      mineLogSuffix = focus === 'iron' ? ' (Specialized: 4 Iron)' : ' (Specialized: 4 Gold)';
+    } else if (hasSpecTech) {
+      const focus: 'gold' | 'iron' = options?.mineSpecialization === 'iron' ? 'iron' : 'gold';
+      initialMineVariant = 'specialized';
+      initialMineSpec = focus;
+      initialMinePool = focus === 'iron' ? { gold: 0, iron: 4 } : { gold: 4, iron: 0 };
+      mineLogSuffix = focus === 'iron' ? ' (Specialized: 4 Iron)' : ' (Specialized: 4 Gold)';
+    } else if (hasLargeTech) {
+      initialMineVariant = 'enlarged';
+      initialMinePool = { gold: 5, iron: 5 };
+      mineLogSuffix = ' (Enlarged: 5 Gold + 5 Iron)';
+    } else {
+      initialMineVariant = 'default';
+      initialMinePool = { gold: 3, iron: 3 };
     }
   }
 
@@ -669,10 +717,16 @@ export function executeBuildFactory(
     ownerId: playerId,
     builtRound: state.round,
     side: builderSide,
-    ...(initialMinePool ? { minePool: initialMinePool, mineVariant: initialMineVariant } : {}),
+    ...(initialMinePool
+      ? {
+          minePool: initialMinePool,
+          mineVariant: initialMineVariant,
+          ...(initialMineSpec ? { mineSpecialization: initialMineSpec } : {}),
+        }
+      : {}),
   };
 
-  addLog(state, `Erected ${spec.name} on hex (${hexId})`, playerId);
+  addLog(state, `Erected ${spec.name}${mineLogSuffix} on hex (${hexId})`, playerId);
   calculateScores(state);
   state.updatedAt = Date.now();
   return true;
@@ -1233,7 +1287,9 @@ export function getLegalResearchUpgrades(
           const variant = h.building.mineVariant;
           const poolLabel =
             variant === 'specialized'
-              ? '4 Gold'
+              ? h.building.mineSpecialization === 'iron'
+                ? '4 Iron'
+                : '4 Gold'
               : variant === 'enlarged'
               ? '5 Gold + 5 Iron'
               : '3 Gold + 3 Iron';
@@ -1386,6 +1442,7 @@ export function executeResearchTech(
     } else if (legal.upgradeKind === 'specialize_mine') {
       const focus = sel.mineSpecialization === 'iron' ? 'iron' : 'gold';
       h.building.mineVariant = 'specialized';
+      h.building.mineSpecialization = focus;
       h.building.minePool = focus === 'iron' ? { gold: 0, iron: 4 } : { gold: 4, iron: 0 };
       addLog(
         state,
@@ -1394,6 +1451,7 @@ export function executeResearchTech(
       );
     } else if (legal.upgradeKind === 'enlarge_mine') {
       h.building.mineVariant = 'enlarged';
+      delete h.building.mineSpecialization;
       h.building.minePool = { gold: 5, iron: 5 };
       addLog(
         state,
@@ -1402,9 +1460,12 @@ export function executeResearchTech(
       );
     } else if (legal.upgradeKind === 'replenish_mine') {
       const variant = h.building.mineVariant;
+      const specFocus = h.building.mineSpecialization === 'iron' ? 'iron' : 'gold';
       h.building.minePool =
         variant === 'specialized'
-          ? { gold: 4, iron: 0 }
+          ? specFocus === 'iron'
+            ? { gold: 0, iron: 4 }
+            : { gold: 4, iron: 0 }
           : variant === 'enlarged'
           ? { gold: 5, iron: 5 }
           : { gold: 3, iron: 3 };
@@ -1465,9 +1526,12 @@ export function executeReplenishMine(
   recordHistorySnapshot(state, `Sink New Mine Shaft on (${hexId})`, playerId);
 
   const variant = hex.building.mineVariant;
+  const specFocus = hex.building.mineSpecialization === 'iron' ? 'iron' : 'gold';
   hex.building.minePool =
     variant === 'specialized'
-      ? { gold: 4, iron: 0 }
+      ? specFocus === 'iron'
+        ? { gold: 0, iron: 4 }
+        : { gold: 4, iron: 0 }
       : variant === 'enlarged'
       ? { gold: 5, iron: 5 }
       : { gold: 3, iron: 3 };

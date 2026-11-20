@@ -51,6 +51,7 @@ export {
 } from './engine/movement';
 
 export type {
+  BuildFactoryOptions,
   BuildRoadOptions,
   LegalResearchUpgrade,
   ResearchSiteCandidate,

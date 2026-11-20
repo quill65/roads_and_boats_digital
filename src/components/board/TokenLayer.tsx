@@ -47,6 +47,9 @@ export const TokenLayer: React.FC<TokenLayerProps> = ({
     ? gameState.transporters[selectedTransporterId]
     : undefined;
 
+  const buildingCentersByHex: Record<string, { x: number; y: number }> = {};
+  const tokenPositionsByHex: Record<string, Array<{ x: number; y: number }>> = {};
+
   return (
     <g pointerEvents={buildMode === 'road' ? 'none' : undefined}>
       {/* Buildings & Workshops (anchored on their legal bank side) */}
@@ -60,6 +63,7 @@ export const TokenLayer: React.FC<TokenLayerProps> = ({
         const owner = gameState.players.find(p => p.id === hex.building?.ownerId);
         const bx = center.x + anchor.dx;
         const by = center.y + anchor.dy - 9;
+        buildingCentersByHex[hex.id] = { x: bx, y: by };
         const w = layout.isSplit ? 32 : 38;
         const h = layout.isSplit ? 25 : 30;
 
@@ -222,6 +226,16 @@ export const TokenLayer: React.FC<TokenLayerProps> = ({
           const carriedWeight = getTransporterCargoWeight(t);
           const carriedGeese = t.cargo.goose || 0;
 
+          const canMoveOntoEnemyToken = Boolean(
+            !isOwnedByActive &&
+              gameState.phase === 'MOVEMENT' &&
+              buildMode !== 'road' &&
+              selectedTransporter &&
+              selectedTransporter.ownerId === activePlayerId &&
+              reachableHexIds?.has(t.hexId) &&
+              onMoveTransporter
+          );
+
           return (
             <g
               key={t.id}
@@ -229,8 +243,12 @@ export const TokenLayer: React.FC<TokenLayerProps> = ({
               className="group cursor-pointer"
               onClick={e => {
                 e.stopPropagation();
-                onSelectTransporter(t.id);
-                onSelectHex(t.hexId);
+                if (canMoveOntoEnemyToken && selectedTransporter) {
+                  onMoveTransporter?.(selectedTransporter.id, t.hexId);
+                } else {
+                  onSelectTransporter(t.id);
+                  onSelectHex(t.hexId);
+                }
               }}
             >
               {/* Subtle non-moving hover highlight ring */}
@@ -280,6 +298,26 @@ export const TokenLayer: React.FC<TokenLayerProps> = ({
                   strokeWidth="1.5"
                   className="pointer-events-none"
                 />
+              )}
+
+              {isOwnedByActive && t.movesLeft <= 0 && gameState.phase === 'MOVEMENT' && (
+                <g transform="translate(9.5, -9.5)" className="pointer-events-none">
+                  <circle
+                    r="5.2"
+                    fill="#0f172a"
+                    stroke="#ef4444"
+                    strokeWidth="1.3"
+                  />
+                  <text
+                    textAnchor="middle"
+                    dy="2.7"
+                    fontSize="7.2"
+                    fill="#fca5a5"
+                    className="font-mono-numbers font-extrabold"
+                  >
+                    0
+                  </text>
+                </g>
               )}
 
               {(carriedWeight > 0 || carriedGeese > 0) && (() => {
@@ -463,12 +501,100 @@ export const TokenLayer: React.FC<TokenLayerProps> = ({
           return aSel - bSel;
         });
 
+        tokenPositionsByHex[hexId] = positionedTokens.map(p => ({ x: p.tx, y: p.ty }));
+
         return (
           <g key={`transporters_${hexId}`}>
             {positionedTokens.map(({ t, tx, ty }) => renderTransporterToken(t, tx, ty))}
           </g>
         );
       })}
+
+      {/* Unobstructed Clickable Move Destination Indicators (rendered cleanly above buildings & units) */}
+      {gameState.phase === 'MOVEMENT' &&
+        buildMode !== 'road' &&
+        selectedTransporter &&
+        selectedTransporter.ownerId === activePlayerId &&
+        reachableHexIds &&
+        reachableHexIds.size > 0 &&
+        onMoveTransporter && (
+          <g id="reachableMoveTargets">
+            {Array.from(reachableHexIds).map(targetHexId => {
+              const hex = gameState.hexes[targetHexId];
+              if (!hex) return null;
+              const center = hexToPixel(hex.q, hex.r, hexRadius, orientation);
+              const occupied: Array<{ x: number; y: number }> = [];
+              if (buildingCentersByHex[targetHexId]) {
+                occupied.push(buildingCentersByHex[targetHexId]);
+              }
+              if (tokenPositionsByHex[targetHexId]) {
+                occupied.push(...tokenPositionsByHex[targetHexId]);
+              }
+
+              const candidates = [
+                { dx: 0, dy: 0 },
+                { dx: 0, dy: -24 },
+                { dx: 0, dy: 24 },
+                { dx: -22, dy: 0 },
+                { dx: 22, dy: 0 },
+                { dx: -18, dy: -18 },
+                { dx: 18, dy: -18 },
+                { dx: -18, dy: 18 },
+                { dx: 18, dy: 18 },
+              ];
+
+              let bestSpot = center;
+              if (occupied.length > 0) {
+                const centerMinDist = Math.min(
+                  ...occupied.map(o => Math.hypot(center.x - o.x, center.y - o.y))
+                );
+                if (centerMinDist < 19) {
+                  let bestScore = -1;
+                  for (const cand of candidates) {
+                    const px = center.x + cand.dx;
+                    const py = center.y + cand.dy;
+                    const minDist = Math.min(...occupied.map(o => Math.hypot(px - o.x, py - o.y)));
+                    if (minDist > bestScore) {
+                      bestScore = minDist;
+                      bestSpot = { x: px, y: py };
+                    }
+                  }
+                }
+              }
+
+              return (
+                <g
+                  key={`move_dot_${targetHexId}`}
+                  transform={`translate(${bestSpot.x}, ${bestSpot.y})`}
+                  className="cursor-pointer"
+                  pointerEvents="auto"
+                  onClick={e => {
+                    e.stopPropagation();
+                    onMoveTransporter(selectedTransporter.id, targetHexId);
+                  }}
+                >
+                  <title>Move selected unit here</title>
+                  <circle r="13" fill="transparent" />
+                  <circle
+                    r="11.5"
+                    fill="#22c55e"
+                    fillOpacity="0.38"
+                    className="animate-ping pointer-events-none"
+                  />
+                  <circle
+                    r="8"
+                    fill="#22c55e"
+                    fillOpacity="0.96"
+                    stroke="#020617"
+                    strokeWidth="1.4"
+                    className="pointer-events-none"
+                  />
+                  <circle r="3.2" fill="#ffffff" className="pointer-events-none" />
+                </g>
+              );
+            })}
+          </g>
+        )}
     </g>
   );
 };

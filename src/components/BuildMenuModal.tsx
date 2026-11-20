@@ -2,10 +2,11 @@
  * Construction & Factory Erecting Modal for the Building Phase
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { BuildingType, GameState, GoodType, Transporter } from '../game/types';
 import { BUILDING_SPECS, GOOD_DETAILS, TECH_UPGRADES, TRANSPORTER_SPECS } from '../game/constants';
 import {
+  BuildFactoryOptions,
   canBuildFactory,
   canReplenishMine,
   getAccessibleSiteMaterials,
@@ -20,7 +21,12 @@ interface BuildMenuModalProps {
   selectedTransporter: Transporter;
   onClose: () => void;
   onSelectTransporter?: (transporterId: string) => void;
-  onBuildFactory: (hexId: string, buildingType: BuildingType, transporterId: string) => void;
+  onBuildFactory: (
+    hexId: string,
+    buildingType: BuildingType,
+    transporterId: string,
+    options?: BuildFactoryOptions
+  ) => void;
   onSelectRoadMode: () => void;
   onReplenishMine?: (hexId: string, transporterId: string) => void;
 }
@@ -38,9 +44,63 @@ export const BuildMenuModal: React.FC<BuildMenuModalProps> = ({
   const hex = gameState.hexes[selectedTransporter.hexId];
   const [activeCategory, setActiveCategory] = useState<'factories' | 'infrastructure' | 'research'>('factories');
 
+  const player = gameState.players.find(p => p.id === activePlayerId);
+  const hasSpecializedMines = Boolean(player?.unlockedTechs?.includes('specialized_mines'));
+  const hasLargeMines = Boolean(player?.unlockedTechs?.includes('large_mines'));
+
+  type MineChoiceId = 'specialized_gold' | 'specialized_iron' | 'enlarged' | 'default';
+  const mineChoices: Array<{
+    id: MineChoiceId;
+    label: string;
+    options: BuildFactoryOptions;
+  }> = [];
+  if (hasSpecializedMines) {
+    mineChoices.push(
+      {
+        id: 'specialized_gold',
+        label: '✨ 4 Gold',
+        options: { mineVariant: 'specialized', mineSpecialization: 'gold' },
+      },
+      {
+        id: 'specialized_iron',
+        label: '⚙️ 4 Iron',
+        options: { mineVariant: 'specialized', mineSpecialization: 'iron' },
+      }
+    );
+  }
+  if (hasLargeMines) {
+    mineChoices.push({
+      id: 'enlarged',
+      label: '⛏️ Enlarged (5G+5I)',
+      options: { mineVariant: 'enlarged' },
+    });
+  }
+  if (hasSpecializedMines || hasLargeMines) {
+    mineChoices.push({
+      id: 'default',
+      label: '⛰️ Standard (3G+3I)',
+      options: { mineVariant: 'default' },
+    });
+  }
+
+  const defaultMineChoiceId: MineChoiceId = hasLargeMines && !hasSpecializedMines
+    ? 'enlarged'
+    : hasSpecializedMines
+    ? 'specialized_gold'
+    : 'default';
+
+  const [selectedMineChoice, setSelectedMineChoice] = useState<MineChoiceId>(defaultMineChoiceId);
+
+  useEffect(() => {
+    if (mineChoices.length > 0 && !mineChoices.some(c => c.id === selectedMineChoice)) {
+      setSelectedMineChoice(mineChoices[0].id);
+    }
+  }, [hasSpecializedMines, hasLargeMines]);
+
   if (!hex) return null;
 
-  const player = gameState.players.find(p => p.id === activePlayerId);
+  const activeMineChoice =
+    mineChoices.find(c => c.id === selectedMineChoice) || mineChoices[0] || null;
   const layout = getHexSideLayout(gameState, hex.id);
   const builderSide = getTransporterSide(gameState, selectedTransporter);
   const builderBank = layout.sides[builderSide];
@@ -279,12 +339,15 @@ export const BuildMenuModal: React.FC<BuildMenuModalProps> = ({
               })()}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {availableFactories.map(([bType, spec]) => {
+                  const factoryOptions =
+                    bType === 'mine' && activeMineChoice ? activeMineChoice.options : undefined;
                   const check = canBuildFactory(
                     gameState,
                     activePlayerId,
                     hex.id,
                     bType,
-                    selectedTransporter.id
+                    selectedTransporter.id,
+                    factoryOptions
                   );
 
                   return (
@@ -337,6 +400,36 @@ export const BuildMenuModal: React.FC<BuildMenuModalProps> = ({
                           })}
                         </div>
 
+                        {/* Mine Variant & Specialization Selector when Mine Techs Unlocked */}
+                        {bType === 'mine' && mineChoices.length > 0 && (
+                          <div className="mt-1.5 p-2 rounded-lg bg-slate-900/90 border border-slate-700/70 space-y-1.5">
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-amber-300">
+                              Choose Mine Type
+                            </p>
+                            <div className="flex flex-wrap gap-1">
+                              {mineChoices.map(choice => {
+                                const isSel = activeMineChoice?.id === choice.id;
+                                return (
+                                  <button
+                                    key={choice.id}
+                                    type="button"
+                                    onClick={() => setSelectedMineChoice(choice.id)}
+                                    className={`px-2 py-1 rounded-md text-[10px] font-bold border transition-colors ${
+                                      isSel
+                                        ? choice.id === 'specialized_iron'
+                                          ? 'bg-sky-400 text-slate-950 border-sky-300'
+                                          : 'bg-amber-400 text-slate-950 border-amber-300'
+                                        : 'bg-slate-950 text-slate-300 border-slate-700 hover:border-slate-500'
+                                    }`}
+                                  >
+                                    {choice.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
                         {/* Terrain check note */}
                         {spec.allowedTerrain && (
                           <p className="text-[10px] text-slate-500">
@@ -357,7 +450,7 @@ export const BuildMenuModal: React.FC<BuildMenuModalProps> = ({
                         <button
                           disabled={!check.valid}
                           onClick={() => {
-                            onBuildFactory(hex.id, bType, selectedTransporter.id);
+                            onBuildFactory(hex.id, bType, selectedTransporter.id, factoryOptions);
                             onClose();
                           }}
                           className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors shrink-0 ${

@@ -132,14 +132,6 @@ export const HexTileLayer: React.FC<HexTileLayerProps> = ({
                 </text>
               </g>
             )}
-
-            {isReachable && (
-              <g pointerEvents="none" transform={`translate(${center.x}, ${center.y})`}>
-                <circle r="13" fill="#22c55e" fillOpacity="0.4" className="animate-ping" />
-                <circle r="8.5" fill="#22c55e" fillOpacity="0.95" />
-                <circle r="3.5" fill="#ffffff" />
-              </g>
-            )}
           </g>
         );
       })}

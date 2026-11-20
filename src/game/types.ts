@@ -76,6 +76,7 @@ export interface BuildingInstance {
   side?: number;
   minePool?: Partial<Record<GoodType, number>>;
   mineVariant?: 'default' | 'specialized' | 'enlarged';
+  mineSpecialization?: 'gold' | 'iron';
 }
 
 export interface HexTile {
@@ -249,7 +250,14 @@ export type GameAction =
       buildType?: 'road' | 'bridge';
       bankPair?: { hexASide: number; hexBSide: number };
     }
-  | { type: 'BUILD_FACTORY'; hexId: string; buildingType: BuildingType; transporterId: string }
+  | {
+      type: 'BUILD_FACTORY';
+      hexId: string;
+      buildingType: BuildingType;
+      transporterId: string;
+      mineVariant?: 'default' | 'specialized' | 'enlarged';
+      mineSpecialization?: 'gold' | 'iron';
+    }
   | { type: 'BUILD_WONDER'; transporterId: string; amount: number }
   | {
       type: 'RESEARCH_TECH';

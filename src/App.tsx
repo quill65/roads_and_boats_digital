@@ -13,6 +13,7 @@ import {
   ResearchUpgradeSelection,
 } from './game/types';
 import {
+  BuildFactoryOptions,
   canDeleteMatch,
   getEligibleResearchSites,
   getProductionCargoCandidates,
@@ -82,6 +83,8 @@ export default function App() {
   const isObservingRef = useRef(false);
   isObservingRef.current = isObserving;
   const lastResearchPromptKeyRef = useRef<string | null>(null);
+  const inFlightMoveTransportersRef = useRef<Set<string>>(new Set());
+  const inFlightLockKeysRef = useRef<Set<string>>(new Set());
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -118,7 +121,11 @@ export default function App() {
           return;
         }
         const freshState = payload as GameState;
-        setGameState(freshState);
+        setGameState(prev =>
+          prev && prev.id === freshState.id && freshState.updatedAt < prev.updatedAt
+            ? prev
+            : freshState
+        );
         if (!isObservingRef.current && freshState.isSolitaire && freshState.players[0]?.id) {
           setActivePlayerId(freshState.players[0].id);
         }
@@ -179,6 +186,31 @@ export default function App() {
       return false;
     }
 
+    // Dedupe rapid double-taps on movements or single-step phase/revert actions
+    if (action.type === 'MOVE_TRANSPORTER') {
+      if (inFlightMoveTransportersRef.current.has(action.transporterId)) {
+        return false;
+      }
+      inFlightMoveTransportersRef.current.add(action.transporterId);
+    }
+
+    const lockKey =
+      action.type === 'ADVANCE_PHASE' ||
+      action.type === 'BUILD_ROAD' ||
+      action.type === 'UNDO_MOVE' ||
+      action.type === 'REDO_MOVE' ||
+      action.type === 'REVERT_TO_HISTORY' ||
+      action.type === 'RESTORE_BOOKMARK'
+        ? action.type
+        : null;
+
+    if (lockKey) {
+      if (inFlightLockKeysRef.current.has(lockKey)) {
+        return false;
+      }
+      inFlightLockKeysRef.current.add(lockKey);
+    }
+
     try {
       const res = await fetch(`/api/games/${activeGameId}/action`, {
         method: 'POST',
@@ -200,6 +232,13 @@ export default function App() {
       console.error('Failed to execute game action:', err);
       showToast('Network error processing move');
       return false;
+    } finally {
+      if (action.type === 'MOVE_TRANSPORTER') {
+        inFlightMoveTransportersRef.current.delete(action.transporterId);
+      }
+      if (lockKey) {
+        inFlightLockKeysRef.current.delete(lockKey);
+      }
     }
   };
 
@@ -311,18 +350,31 @@ export default function App() {
   const handleBuildFactory = async (
     hexId: string,
     buildingType: BuildingType,
-    transporterId: string
+    transporterId: string,
+    options?: BuildFactoryOptions
   ) => {
     const success = await sendGameAction({
       type: 'BUILD_FACTORY',
       hexId,
       buildingType,
       transporterId,
+      ...(options?.mineVariant ? { mineVariant: options.mineVariant } : {}),
+      ...(options?.mineSpecialization ? { mineSpecialization: options.mineSpecialization } : {}),
     });
 
     if (success) {
       sounds.playBuild();
-      showToast(`Factory constructed on hex (${hexId})`);
+      const label =
+        buildingType === 'mine' && options?.mineVariant === 'enlarged'
+          ? 'Enlarged Mine (5 Gold + 5 Iron)'
+          : buildingType === 'mine' && options?.mineVariant === 'specialized'
+          ? options.mineSpecialization === 'iron'
+            ? 'Specialized Iron Mine (4 Iron)'
+            : 'Specialized Gold Mine (4 Gold)'
+          : buildingType === 'mine' && options?.mineVariant === 'default'
+          ? 'Standard Mine (3 Gold + 3 Iron)'
+          : 'Factory';
+      showToast(`${label} constructed on hex (${hexId})`);
     }
   };
 
@@ -1064,7 +1116,7 @@ export default function App() {
           onOpenGameRules={() => setShowAlmanacModal(true)}
         />
         {toastMessage && (
-          <div className="fixed top-16 sm:top-20 left-1/2 -translate-x-1/2 z-50 max-w-[calc(100vw-1.5rem)] w-max px-4 sm:px-5 py-2.5 rounded-xl bg-slate-900/95 border border-amber-500/70 text-amber-200 text-xs font-semibold shadow-2xl backdrop-blur-md animate-fade-in flex items-center gap-2 text-center">
+          <div className="pointer-events-none fixed top-16 sm:top-20 left-1/2 -translate-x-1/2 z-50 max-w-[calc(100vw-1.5rem)] w-max px-4 sm:px-5 py-2.5 rounded-xl bg-slate-900/95 border border-amber-500/70 text-amber-200 text-xs font-semibold shadow-2xl backdrop-blur-md animate-fade-in flex items-center gap-2 text-center">
             <span className="shrink-0">⚠️</span>
             <span className="leading-snug">{toastMessage}</span>
           </div>
@@ -1192,12 +1244,22 @@ export default function App() {
           setSelectedHexId(hId);
           if (hId && buildMode !== 'road') {
             const cur = selectedTransporterId ? gameState.transporters[selectedTransporterId] : null;
-            if (!cur || cur.ownerId !== activePlayerId || cur.hexId !== hId) {
-              const ownedOnHex = Object.values(gameState.transporters).find(
-                t => t.ownerId === activePlayerId && t.hexId === hId
-              );
-              if (ownedOnHex) {
-                setSelectedTransporterId(ownedOnHex.id);
+            const curOnHex =
+              cur && cur.ownerId === activePlayerId && cur.hexId === hId ? cur : null;
+            const ownedOnHexList = Object.values(gameState.transporters).filter(
+              t => t.ownerId === activePlayerId && t.hexId === hId
+            );
+            if (ownedOnHexList.length > 0) {
+              const prefersAvailableMove =
+                gameState.phase === 'MOVEMENT' && (!curOnHex || curOnHex.movesLeft <= 0);
+              if (!curOnHex || prefersAvailableMove) {
+                const bestCandidate =
+                  (gameState.phase === 'MOVEMENT'
+                    ? ownedOnHexList.find(t => t.movesLeft > 0)
+                    : undefined) || ownedOnHexList[0];
+                if (bestCandidate && (!curOnHex || bestCandidate.id !== curOnHex.id)) {
+                  setSelectedTransporterId(bestCandidate.id);
+                }
               }
             }
           }
@@ -1208,7 +1270,7 @@ export default function App() {
 
       {/* Toast Notification Banner */}
       {toastMessage && (
-        <div className="absolute top-28 sm:top-24 left-1/2 -translate-x-1/2 z-50 max-w-[calc(100vw-1.5rem)] w-max px-4 sm:px-5 py-2.5 rounded-xl bg-slate-900/95 border border-amber-500/70 text-amber-200 text-xs font-semibold shadow-2xl backdrop-blur-md animate-fade-in flex items-center gap-2 text-center">
+        <div className="pointer-events-none absolute top-28 sm:top-24 left-1/2 -translate-x-1/2 z-50 max-w-[calc(100vw-1.5rem)] w-max px-4 sm:px-5 py-2.5 rounded-xl bg-slate-900/95 border border-amber-500/70 text-amber-200 text-xs font-semibold shadow-2xl backdrop-blur-md animate-fade-in flex items-center gap-2 text-center">
           <span className="shrink-0">⚠️</span>
           <span className="leading-snug">{toastMessage}</span>
         </div>

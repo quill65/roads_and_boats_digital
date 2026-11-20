@@ -160,10 +160,30 @@ function persistGames() {
     games.forEach((g, id) => {
       data[id] = g;
     });
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    fs.writeFileSync(DB_FILE, JSON.stringify(data), 'utf-8');
   } catch (err) {
     console.error('Failed to persist games to disk:', err);
   }
+}
+
+function sanitizeGameForClient(game: GameState): GameState {
+  return {
+    ...game,
+    history: (game.history || []).map(entry => ({
+      ...entry,
+      snapshot: '',
+    })),
+    redoStack: (game.redoStack || []).map(entry => ({
+      ...entry,
+      snapshot: '',
+    })),
+    bookmarks: game.bookmarks
+      ? game.bookmarks.map(bm => ({
+          ...bm,
+          snapshot: '',
+        }))
+      : undefined,
+  };
 }
 
 function loadPersistedMapNotes() {
@@ -197,7 +217,7 @@ function broadcastGameState(gameId: string) {
   if (!game) return;
   const clients = sseClients.get(gameId);
   if (clients && clients.size > 0) {
-    const payload = `data: ${JSON.stringify(game)}\n\n`;
+    const payload = `data: ${JSON.stringify(sanitizeGameForClient(game))}\n\n`;
     clients.forEach(client => {
       try {
         client.write(payload);
@@ -322,7 +342,7 @@ app.post('/api/games', (req: Request, res: Response) => {
   games.set(newGame.id, newGame);
   persistGames();
 
-  res.status(201).json({ game: newGame });
+  res.status(201).json({ game: sanitizeGameForClient(newGame) });
 });
 
 // 3. Fetch single game
@@ -334,7 +354,7 @@ app.get('/api/games/:id', (req: Request, res: Response) => {
   if (isSoloGameState(game) && req.query.observe !== '1') {
     reconnectSoloPlayer(game);
   }
-  res.json({ game });
+  res.json({ game: sanitizeGameForClient(game) });
 });
 
 // 4. Join or reconnect to a game
@@ -347,7 +367,7 @@ app.post('/api/games/:id/join', (req: Request, res: Response) => {
     const soloPlayer = reconnectSoloPlayer(game);
     persistGames();
     broadcastGameState(game.id);
-    return res.json({ game, player: soloPlayer, reconnected: true });
+    return res.json({ game: sanitizeGameForClient(game), player: soloPlayer, reconnected: true });
   }
 
   const {
@@ -371,7 +391,7 @@ app.post('/api/games/:id/join', (req: Request, res: Response) => {
     persistGames();
     broadcastGameState(game.id);
     return res.json({
-      game,
+      game: sanitizeGameForClient(game),
       player: existingPlayer,
       reconnected: true,
       alreadyResigned: Boolean(existingPlayer.resigned),
@@ -404,7 +424,7 @@ app.post('/api/games/:id/join', (req: Request, res: Response) => {
   broadcastGameState(game.id);
 
   const addedPlayer = updatedGame.players[updatedGame.players.length - 1];
-  res.json({ game: updatedGame, player: addedPlayer });
+  res.json({ game: sanitizeGameForClient(updatedGame), player: addedPlayer });
 });
 
 // 5. Execute Action
@@ -438,7 +458,7 @@ app.post('/api/games/:id/action', (req: Request, res: Response) => {
         }
         persistGames();
         broadcastGameState(game.id);
-        return res.json({ success: true, removed: false, game });
+        return res.json({ success: true, removed: false, game: sanitizeGameForClient(game) });
       }
       case 'MOVE_TRANSPORTER': {
         const check = canMoveTransporter(game, action.transporterId, action.targetHexId, action.playerId, action.targetSide);
@@ -499,12 +519,33 @@ app.post('/api/games/:id/action', (req: Request, res: Response) => {
       }
       case 'BUILD_FACTORY': {
         const pId = action.playerId || game.activePlayerId;
-        const check = canBuildFactory(game, pId, action.hexId, action.buildingType, action.transporterId);
+        const factoryOpts =
+          action.mineVariant !== undefined || action.mineSpecialization !== undefined
+            ? {
+                mineVariant: action.mineVariant,
+                mineSpecialization: action.mineSpecialization,
+              }
+            : undefined;
+        const check = canBuildFactory(
+          game,
+          pId,
+          action.hexId,
+          action.buildingType,
+          action.transporterId,
+          factoryOpts
+        );
         if (!check.valid) {
           reason = check.reason || 'Cannot construct factory';
           break;
         }
-        success = executeBuildFactory(game, pId, action.hexId, action.buildingType, action.transporterId);
+        success = executeBuildFactory(
+          game,
+          pId,
+          action.hexId,
+          action.buildingType,
+          action.transporterId,
+          factoryOpts
+        );
         break;
       }
       case 'BUILD_WONDER': {
@@ -609,7 +650,7 @@ app.post('/api/games/:id/action', (req: Request, res: Response) => {
   if (success) {
     persistGames();
     broadcastGameState(game.id);
-    res.json({ success: true, game });
+    res.json({ success: true, game: sanitizeGameForClient(game) });
   } else {
     res.status(400).json({ success: false, reason: reason || 'Invalid action according to game rules' });
   }
@@ -648,7 +689,7 @@ app.post('/api/games/:id/resign', (req: Request, res: Response) => {
 
   persistGames();
   broadcastGameState(game.id);
-  return res.json({ success: true, removed: false, game });
+  return res.json({ success: true, removed: false, game: sanitizeGameForClient(game) });
 });
 
 // 7. Delete a game (permitted for the match starter or elevated player "John Burt")
@@ -703,7 +744,7 @@ app.patch('/api/games/:id', (req: Request, res: Response) => {
   }
   persistGames();
   broadcastGameState(game.id);
-  return res.json({ success: true, game });
+  return res.json({ success: true, game: sanitizeGameForClient(game) });
 });
 
 // 8. Reset / Restart game
@@ -726,7 +767,7 @@ app.post('/api/games/:id/reset', (req: Request, res: Response) => {
   persistGames();
   broadcastGameState(game.id);
 
-  res.json({ success: true, game: resetGame });
+  res.json({ success: true, game: sanitizeGameForClient(resetGame) });
 });
 
 // 9. Real-Time Server-Sent Events (SSE) Stream
@@ -750,7 +791,7 @@ app.get('/api/games/:id/stream', (req: Request, res: Response) => {
   clientSet.add(res);
 
   // Send current state immediately
-  res.write(`data: ${JSON.stringify(game)}\n\n`);
+  res.write(`data: ${JSON.stringify(sanitizeGameForClient(game))}\n\n`);
 
   // Keep connection alive with periodic comment ping
   const interval = setInterval(() => {

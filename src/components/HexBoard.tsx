@@ -79,6 +79,7 @@ export const HexBoard: React.FC<HexBoardProps> = ({
     handleTouchStart,
     handleTouchMove,
     handleTouchEnd,
+    handleClickCapture,
   } = useBoardViewport(containerRef, gameState.id, gameState.hexes, HEX_RADIUS, orientation);
 
   const selectedTransporter = selectedTransporterId

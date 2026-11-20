@@ -111,6 +111,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   const [isSavingName, setIsSavingName] = useState(false);
   const [showMobileScores, setShowMobileScores] = useState(false);
   const [selectedCargoSide, setSelectedCargoSide] = useState<number>(0);
+  const [isUnitLegendCollapsed, setIsUnitLegendCollapsed] = useState(false);
 
   const handleCopyGameCode = async () => {
     try {
@@ -762,37 +763,37 @@ export const GameHUD: React.FC<GameHUDProps> = ({
       </div>
 
       {/* 3 & 4. Lower-Left Tile Legend, Lower-Right Transporter Legend, and Bottom Action Buttons */}
-      <div className="absolute inset-x-0 bottom-0 z-20 pointer-events-none flex flex-col gap-1.5 p-1.5 sm:p-2.5 lg:block lg:p-0">
+      <div className="absolute inset-x-0 bottom-0 z-30 pointer-events-none flex flex-col gap-1 p-1.5 sm:p-2.5 lg:block lg:p-0">
         {/* Lower Corner Legends Row (stacked directly above action buttons below lg; true bottom corners on lg+) */}
         <div className="flex items-end justify-between gap-1.5 w-full lg:block">
           {/* Selected Tile Legend — Lower Left */}
           <section
             aria-label="Selected Tile Legend"
-            className={`pointer-events-auto lg:absolute lg:bottom-2.5 lg:left-2.5 min-w-[112px] ${
-              hasInteractiveCargoRows
-                ? 'max-w-[39%] sm:max-w-[196px]'
-                : 'max-w-[48%] lg:max-w-[196px]'
-            } px-2 py-1.5 bg-slate-950/82 backdrop-blur-sm border border-slate-800/85 rounded-lg shadow-lg text-slate-200 leading-tight`}
+            className={`pointer-events-auto lg:absolute lg:bottom-2.5 lg:left-2.5 min-w-[92px] ${
+              hasInteractiveCargoRows && !isUnitLegendCollapsed
+                ? 'max-w-[43%] sm:max-w-[180px]'
+                : 'max-w-[46%] lg:max-w-[180px]'
+            } px-1.5 py-1 sm:px-2 sm:py-1.5 bg-slate-950/84 backdrop-blur-sm border border-slate-800/85 rounded-lg shadow-lg text-slate-200 leading-tight`}
           >
-            <div className="flex items-center justify-between gap-1.5 pb-1 border-b border-slate-800/80">
-              <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 shrink-0">
+            <div className="flex items-center justify-between gap-1 pb-0.5 border-b border-slate-800/80">
+              <span className="text-[8.5px] sm:text-[9px] font-bold uppercase tracking-wider text-slate-400 shrink-0">
                 Tile
               </span>
               {selectedHex && selectedTerrain ? (
-                <span className="text-[10px] font-semibold text-sky-300 flex items-center gap-0.5 truncate">
+                <span className="text-[9.5px] sm:text-[10px] font-semibold text-sky-300 flex items-center gap-0.5 truncate">
                   <span className="shrink-0">{selectedTerrain.icon}</span>
                   <span className="truncate">{selectedTerrain.name}</span>
                 </span>
               ) : (
-                <span className="text-[10px] text-slate-500 truncate">None</span>
+                <span className="text-[9.5px] sm:text-[10px] text-slate-500 truncate">None</span>
               )}
             </div>
 
             {selectedHex && selectedTerrain && (
-              <div className="mt-1 space-y-0.5 text-[10px]">
+              <div className="mt-0.5 sm:mt-1 space-y-0.5 text-[9.5px] sm:text-[10px]">
                 {/* Building */}
-                <div className="flex items-center justify-between gap-1.5">
-                  <span className="text-[9px] text-slate-400 shrink-0">Bldg</span>
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-[8.5px] sm:text-[9px] text-slate-400 shrink-0">Bldg</span>
                   {selectedHex.building && selectedBuildingSpec ? (
                     <span className="font-semibold text-white flex items-center gap-0.5 truncate">
                       {selectedBuildingOwner && (
@@ -809,15 +810,30 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                   )}
                 </div>
 
+                {selectedHex.building?.type === 'mine' && selectedHex.building.minePool && (
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-[8.5px] sm:text-[9px] text-slate-400 shrink-0">
+                      {selectedHex.building.mineVariant === 'enlarged'
+                        ? 'Enl'
+                        : selectedHex.building.mineVariant === 'specialized'
+                        ? 'Spec'
+                        : 'Pool'}
+                    </span>
+                    <span className="font-mono text-[9px] text-amber-300 truncate">
+                      ✨{selectedHex.building.minePool.gold || 0} · ⚙️{selectedHex.building.minePool.iron || 0}
+                    </span>
+                  </div>
+                )}
+
                 {/* Itemized Resources on Tile (Ground + On Transporters) */}
                 <div className="pt-0.5 border-t border-slate-800/70">
                   {tileResourceItems.length === 0 ? (
-                    <div className="flex items-center justify-between gap-1.5">
-                      <span className="text-[9px] text-slate-400">Res</span>
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[8.5px] sm:text-[9px] text-slate-400">Res</span>
                       <span className="text-slate-500">None</span>
                     </div>
                   ) : (
-                    <ul className="space-y-0.5 max-h-20 sm:max-h-24 overflow-y-auto pr-0.5">
+                    <ul className="space-y-0.5 max-h-[60px] sm:max-h-24 overflow-y-auto pr-0.5">
                       {tileResourceItems.map(item => {
                         const detail = GOOD_DETAILS[item.good];
                         const tag =
@@ -829,7 +845,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                         return (
                           <li
                             key={item.good}
-                            className="flex items-center justify-between gap-1 text-[10px]"
+                            className="flex items-center justify-between gap-1 text-[9.5px] sm:text-[10px]"
                           >
                             <span className="flex items-center gap-0.5 min-w-0 truncate text-slate-200">
                               <span className="shrink-0">{detail.icon}</span>
@@ -849,39 +865,59 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             )}
           </section>
 
-          {/* Selected Transporter Legend — Lower Right (with Inline Load/Unload Controls) */}
+          {/* Selected Transporter Legend — Lower Right (compact on mobile with collapse toggle) */}
           <section
             aria-label="Selected Transporter Legend"
-            className={`pointer-events-auto lg:absolute lg:bottom-2.5 lg:right-2.5 min-w-[120px] ${
-              hasInteractiveCargoRows
-                ? 'max-w-[59%] sm:max-w-[252px] lg:max-w-[258px]'
-                : 'max-w-[48%] lg:max-w-[196px]'
-            } px-2 py-1.5 bg-slate-950/85 backdrop-blur-sm border border-slate-800/85 rounded-lg shadow-lg text-slate-200 leading-tight`}
+            className={`pointer-events-auto lg:absolute lg:bottom-2.5 lg:right-2.5 min-w-[100px] ${
+              !isUnitLegendCollapsed && hasInteractiveCargoRows
+                ? 'max-w-[54%] sm:max-w-[218px] lg:max-w-[236px]'
+                : 'max-w-[48%] sm:max-w-[184px] lg:max-w-[184px]'
+            } px-1.5 py-1 sm:px-2 sm:py-1.5 bg-slate-950/86 backdrop-blur-sm border border-slate-800/85 rounded-lg shadow-lg text-slate-200 leading-tight`}
           >
-            <div className="flex items-center justify-between gap-1.5 pb-1 border-b border-slate-800/80">
-              <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 shrink-0">
+            <div
+              className={`flex items-center justify-between gap-1 ${
+                !isUnitLegendCollapsed && selectedTransporter ? 'pb-0.5 border-b border-slate-800/80' : ''
+              }`}
+            >
+              <span className="text-[8.5px] sm:text-[9px] font-bold uppercase tracking-wider text-slate-400 shrink-0">
                 Unit
               </span>
               {selectedTransporter && selectedTransporterSpec ? (
-                <span className="text-[10px] font-semibold text-amber-300 flex items-center gap-0.5 truncate">
-                  {selectedTransporterOwner && (
-                    <span
-                      className="w-1.5 h-1.5 rounded-full shrink-0"
-                      style={{ backgroundColor: selectedTransporterOwner.color }}
-                    />
+                <div className="flex items-center gap-1 min-w-0">
+                  <span className="text-[9.5px] sm:text-[10px] font-semibold text-amber-300 flex items-center gap-0.5 truncate">
+                    {selectedTransporterOwner && (
+                      <span
+                        className="w-1.5 h-1.5 rounded-full shrink-0"
+                        style={{ backgroundColor: selectedTransporterOwner.color }}
+                      />
+                    )}
+                    <span className="shrink-0">{selectedTransporterSpec.icon}</span>
+                    <span className="truncate">{selectedTransporterSpec.name}</span>
+                  </span>
+                  {isUnitLegendCollapsed && (
+                    <span className="text-[8.5px] font-mono tabular-nums text-sky-300 shrink-0">
+                      M{selectedTransporter.movesLeft}
+                    </span>
                   )}
-                  <span className="shrink-0">{selectedTransporterSpec.icon}</span>
-                  <span className="truncate">{selectedTransporterSpec.name}</span>
-                </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsUnitLegendCollapsed(prev => !prev)}
+                    aria-label={isUnitLegendCollapsed ? 'Expand unit legend' : 'Collapse unit legend'}
+                    title={isUnitLegendCollapsed ? 'Expand unit panel' : 'Compact unit panel'}
+                    className="w-4 h-4 rounded text-[9px] leading-none flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 shrink-0"
+                  >
+                    {isUnitLegendCollapsed ? '▴' : '▾'}
+                  </button>
+                </div>
               ) : (
-                <span className="text-[10px] text-slate-500 truncate">None</span>
+                <span className="text-[9.5px] sm:text-[10px] text-slate-500 truncate">None</span>
               )}
             </div>
 
-            {selectedTransporter && selectedTransporterSpec && (
-              <div className="mt-1 space-y-1 text-[10px]">
+            {!isUnitLegendCollapsed && selectedTransporter && selectedTransporterSpec && (
+              <div className="mt-0.5 sm:mt-1 space-y-0.5 sm:space-y-1 text-[9.5px] sm:text-[10px]">
                 {/* Available Space & Moves Left */}
-                <div className="flex items-center justify-between gap-2 font-mono tabular-nums text-[10px]">
+                <div className="flex items-center justify-between gap-1.5 font-mono tabular-nums text-[9px] sm:text-[10px]">
                   <span className="text-slate-400 whitespace-nowrap">
                     Spc{' '}
                     <strong className="text-emerald-300">{selectedTransporterAvailableSpace}</strong>
@@ -889,7 +925,15 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                   </span>
                   <span className="text-slate-400 whitespace-nowrap">
                     Mov{' '}
-                    <strong className="text-sky-300">{selectedTransporter.movesLeft}</strong>
+                    <strong
+                      className={
+                        selectedTransporter.movesLeft <= 0 && gameState.phase === 'MOVEMENT'
+                          ? 'text-rose-400'
+                          : 'text-sky-300'
+                      }
+                    >
+                      {selectedTransporter.movesLeft}
+                    </strong>
                     <span className="text-slate-500">/{selectedTransporter.maxMoves}</span>
                   </span>
                 </div>
@@ -898,8 +942,8 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 {canManageCargoInline &&
                   transporterLayout?.isSplit &&
                   transporterInteractableSides.length > 1 && (
-                    <div className="flex flex-wrap items-center gap-1 pt-0.5 border-t border-slate-800/70">
-                      <span className="text-[9px] text-slate-400 mr-0.5">Bank</span>
+                    <div className="flex flex-wrap items-center gap-0.5 pt-0.5 border-t border-slate-800/70">
+                      <span className="text-[8.5px] text-slate-400 mr-0.5">Bank</span>
                       {transporterInteractableSides.map(s => {
                         const reg = transporterLayout.sides[s];
                         const shortLabel = reg?.compassLabel?.replace(' Bank', '') || `S${s + 1}`;
@@ -911,7 +955,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                               e.stopPropagation();
                               setSelectedCargoSide(s);
                             }}
-                            className={`px-1.5 py-0.5 rounded text-[9px] font-semibold border transition-colors ${
+                            className={`px-1 py-0.5 rounded text-[8.5px] font-semibold border transition-colors ${
                               activeCargoSide === s
                                 ? 'bg-sky-400 text-slate-950 border-sky-300'
                                 : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-500'
@@ -928,14 +972,14 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 <div className="pt-0.5 border-t border-slate-800/70">
                   {hasInteractiveCargoRows ? (
                     <div className="space-y-0.5">
-                      <div className="flex items-center justify-between gap-1 text-[8px] text-slate-500 pb-0.5">
+                      <div className="hidden sm:flex items-center justify-between gap-1 text-[8px] text-slate-500 pb-0.5">
                         <span>Item</span>
                         <span className="flex items-center gap-2 shrink-0">
                           <span className="font-mono">On/Tile</span>
-                          <span className="w-[52px] sm:w-[48px] text-center">Drop/Load</span>
+                          <span className="w-[44px] text-center">−/+</span>
                         </span>
                       </div>
-                      <ul className="space-y-1 max-h-28 sm:max-h-32 overflow-y-auto pr-0.5">
+                      <ul className="space-y-0.5 max-h-[68px] sm:max-h-28 overflow-y-auto pr-0.5">
                         {transporterCargoRows.map(row => {
                           const detail = GOOD_DETAILS[row.good];
                           const targetSideArg = transporterLayout?.isSplit
@@ -944,7 +988,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                           return (
                             <li
                               key={row.good}
-                              className="flex items-center justify-between gap-1 text-[10px]"
+                              className="flex items-center justify-between gap-1 text-[9.5px] sm:text-[10px]"
                             >
                               <span
                                 className="flex items-center gap-0.5 min-w-0 truncate text-slate-200"
@@ -957,8 +1001,8 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                                 <span className="shrink-0">{detail.icon}</span>
                                 <span className="truncate">{detail.name}</span>
                               </span>
-                              <span className="flex items-center gap-1.5 shrink-0">
-                                <span className="font-mono tabular-nums text-[10px] whitespace-nowrap">
+                              <span className="flex items-center gap-1 shrink-0">
+                                <span className="font-mono tabular-nums text-[9px] sm:text-[10px] whitespace-nowrap">
                                   <span
                                     className={
                                       row.loadedQty > 0
@@ -1000,7 +1044,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                                         targetSideArg
                                       );
                                     }}
-                                    className={`w-6 h-6 sm:w-5 sm:h-5 rounded flex items-center justify-center text-xs font-bold leading-none border transition-colors ${
+                                    className={`w-5 h-5 rounded flex items-center justify-center text-[11px] font-bold leading-none border transition-colors ${
                                       row.canUnload
                                         ? 'bg-amber-500/20 hover:bg-amber-500/35 text-amber-200 border-amber-500/50 active:scale-95'
                                         : 'bg-slate-900/60 text-slate-600 border-slate-800 cursor-not-allowed'
@@ -1026,7 +1070,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                                         targetSideArg
                                       );
                                     }}
-                                    className={`w-6 h-6 sm:w-5 sm:h-5 rounded flex items-center justify-center text-xs font-bold leading-none border transition-colors ${
+                                    className={`w-5 h-5 rounded flex items-center justify-center text-[11px] font-bold leading-none border transition-colors ${
                                       row.canLoad
                                         ? 'bg-emerald-500/20 hover:bg-emerald-500/35 text-emerald-200 border-emerald-500/50 active:scale-95'
                                         : 'bg-slate-900/60 text-slate-600 border-slate-800 cursor-not-allowed'
@@ -1042,18 +1086,18 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                       </ul>
                     </div>
                   ) : selectedTransporterCargoItems.length === 0 ? (
-                    <div className="flex items-center justify-between gap-1.5">
-                      <span className="text-[9px] text-slate-400">Cargo</span>
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[8.5px] sm:text-[9px] text-slate-400">Cargo</span>
                       <span className="text-slate-500">Empty</span>
                     </div>
                   ) : (
-                    <ul className="space-y-0.5 max-h-20 sm:max-h-24 overflow-y-auto pr-0.5">
+                    <ul className="space-y-0.5 max-h-[60px] sm:max-h-24 overflow-y-auto pr-0.5">
                       {selectedTransporterCargoItems.map(item => {
                         const detail = GOOD_DETAILS[item.good];
                         return (
                           <li
                             key={item.good}
-                            className="flex items-center justify-between gap-1 text-[10px]"
+                            className="flex items-center justify-between gap-1 text-[9.5px] sm:text-[10px]"
                           >
                             <span className="flex items-center gap-0.5 min-w-0 truncate text-slate-200">
                               <span className="shrink-0">{detail.icon}</span>
@@ -1074,7 +1118,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
         </div>
 
         {/* Bottom Floating Stage Advancement & Action Buttons */}
-        <div className="lg:absolute lg:bottom-3 lg:left-1/2 lg:-translate-x-1/2 flex flex-wrap items-center justify-center gap-1.5 sm:gap-2 w-full lg:w-auto lg:max-w-[calc(100vw-32rem)]">
+        <div className="relative z-30 lg:absolute lg:bottom-3 lg:left-1/2 lg:-translate-x-1/2 flex flex-wrap items-center justify-center gap-1.5 sm:gap-2 w-full lg:w-auto lg:max-w-[calc(100vw-30rem)]">
 
           {!isReadOnly && gameState.phase === 'PRODUCTION' && hasResearchAvailable && onOpenResearch && (
             <button

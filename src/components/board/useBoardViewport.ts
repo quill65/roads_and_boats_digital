@@ -6,6 +6,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { HexOrientation, HexTile } from '../../game/types';
 import { hexToPixel } from '../../game/hexMath';
 
+const MOUSE_DRAG_THRESHOLD_PX = 5;
+const TOUCH_DRAG_THRESHOLD_PX = 10;
+
 export function useBoardViewport(
   containerRef: React.RefObject<HTMLDivElement | null>,
   gameId: string,
@@ -14,13 +17,39 @@ export function useBoardViewport(
   orientation: HexOrientation = 'pointy'
 ) {
   const [viewTransform, setViewTransform] = useState({ x: 500, y: 380, scale: 1 });
-  const [isPanning, setIsPanning] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const viewTransformRef = useRef(viewTransform);
+  viewTransformRef.current = viewTransform;
+
+  const isMouseDownRef = useRef(false);
+  const isTouchActiveRef = useRef(false);
+  const didPanRef = useRef(false);
+  const suppressClickRef = useRef(false);
+  const suppressTimerRef = useRef<number | null>(null);
+
+  const pointerStartClientRef = useRef({ x: 0, y: 0 });
+  const pointerOriginTransformRef = useRef({ x: 0, y: 0 });
 
   const touchStartDistRef = useRef<number | null>(null);
   const touchStartTransformRef = useRef({ x: 0, y: 0, scale: 1 });
   const touchStartMidRef = useRef({ x: 0, y: 0 });
-  const lastTapRef = useRef<number>(0);
+
+  const scheduleClearSuppressClick = () => {
+    if (suppressTimerRef.current !== null) {
+      window.clearTimeout(suppressTimerRef.current);
+    }
+    suppressTimerRef.current = window.setTimeout(() => {
+      suppressClickRef.current = false;
+      suppressTimerRef.current = null;
+    }, 120);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (suppressTimerRef.current !== null) {
+        window.clearTimeout(suppressTimerRef.current);
+      }
+    };
+  }, []);
 
   const fitBoardToView = useCallback(() => {
     const rect = containerRef.current?.getBoundingClientRect();
@@ -48,8 +77,8 @@ export function useBoardViewport(
     const boardH = Math.max(maxY - minY, hexRadius * 2);
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
-    const availW = w < 640 ? Math.max(w - 32, 240) : Math.max(w - 120, 320);
-    const availH = h < 640 ? Math.max(h - 170, 220) : Math.max(h - 210, 260);
+    const availW = w < 640 ? Math.max(w - 24, 240) : Math.max(w - 120, 320);
+    const availH = h < 640 ? Math.max(h - 150, 220) : Math.max(h - 210, 260);
     const fitScale = Math.min(Math.max(Math.min(availW / boardW, availH / boardH), 0.45), 1.15);
 
     setViewTransform({
@@ -98,22 +127,39 @@ export function useBoardViewport(
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (e.button === 0 || e.button === 1) {
-      setIsPanning(true);
-      setDragStart({ x: e.clientX - viewTransform.x, y: e.clientY - viewTransform.y });
+      isMouseDownRef.current = true;
+      didPanRef.current = false;
+      suppressClickRef.current = false;
+      pointerStartClientRef.current = { x: e.clientX, y: e.clientY };
+      pointerOriginTransformRef.current = {
+        x: viewTransformRef.current.x,
+        y: viewTransformRef.current.y,
+      };
     }
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isPanning) return;
+    if (!isMouseDownRef.current) return;
+    const dx = e.clientX - pointerStartClientRef.current.x;
+    const dy = e.clientY - pointerStartClientRef.current.y;
+    if (!didPanRef.current) {
+      if (Math.hypot(dx, dy) < MOUSE_DRAG_THRESHOLD_PX) return;
+      didPanRef.current = true;
+    }
     setViewTransform(prev => ({
       ...prev,
-      x: e.clientX - dragStart.x,
-      y: e.clientY - dragStart.y,
+      x: pointerOriginTransformRef.current.x + dx,
+      y: pointerOriginTransformRef.current.y + dy,
     }));
   };
 
   const handleMouseUp = () => {
-    setIsPanning(false);
+    if (isMouseDownRef.current && didPanRef.current) {
+      suppressClickRef.current = true;
+      scheduleClearSuppressClick();
+    }
+    isMouseDownRef.current = false;
+    didPanRef.current = false;
   };
 
   const handleWheel = (e: React.WheelEvent) => {
@@ -134,37 +180,29 @@ export function useBoardViewport(
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
-    const now = Date.now();
-    if (e.touches.length === 1 && now - lastTapRef.current < 300) {
-      const rect = containerRef.current?.getBoundingClientRect();
-      const tx = e.touches[0].clientX - (rect?.left || 0);
-      const ty = e.touches[0].clientY - (rect?.top || 0);
-
-      setViewTransform(prev => {
-        const targetScale = prev.scale > 1.2 ? 1.0 : 1.6;
-        const newX = tx - ((tx - prev.x) / prev.scale) * targetScale;
-        const newY = ty - ((ty - prev.y) / prev.scale) * targetScale;
-        return { x: newX, y: newY, scale: targetScale };
-      });
-      lastTapRef.current = 0;
-      return;
-    }
-    lastTapRef.current = now;
-
     if (e.touches.length === 1) {
-      setIsPanning(true);
-      setDragStart({
-        x: e.touches[0].clientX - viewTransform.x,
-        y: e.touches[0].clientY - viewTransform.y,
-      });
+      isTouchActiveRef.current = true;
+      didPanRef.current = false;
+      suppressClickRef.current = false;
+      touchStartDistRef.current = null;
+      pointerStartClientRef.current = {
+        x: e.touches[0].clientX,
+        y: e.touches[0].clientY,
+      };
+      pointerOriginTransformRef.current = {
+        x: viewTransformRef.current.x,
+        y: viewTransformRef.current.y,
+      };
     } else if (e.touches.length >= 2) {
-      setIsPanning(false);
+      isTouchActiveRef.current = false;
+      didPanRef.current = true;
+      suppressClickRef.current = true;
       const dist = Math.hypot(
         e.touches[0].clientX - e.touches[1].clientX,
         e.touches[0].clientY - e.touches[1].clientY
       );
-      touchStartDistRef.current = dist;
-      touchStartTransformRef.current = { ...viewTransform };
+      touchStartDistRef.current = dist || 1;
+      touchStartTransformRef.current = { ...viewTransformRef.current };
 
       const rect = containerRef.current?.getBoundingClientRect();
       touchStartMidRef.current = {
@@ -175,11 +213,17 @@ export function useBoardViewport(
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    if (e.touches.length === 1 && isPanning) {
+    if (e.touches.length === 1 && isTouchActiveRef.current) {
+      const dx = e.touches[0].clientX - pointerStartClientRef.current.x;
+      const dy = e.touches[0].clientY - pointerStartClientRef.current.y;
+      if (!didPanRef.current) {
+        if (Math.hypot(dx, dy) < TOUCH_DRAG_THRESHOLD_PX) return;
+        didPanRef.current = true;
+      }
       setViewTransform(prev => ({
         ...prev,
-        x: e.touches[0].clientX - dragStart.x,
-        y: e.touches[0].clientY - dragStart.y,
+        x: pointerOriginTransformRef.current.x + dx,
+        y: pointerOriginTransformRef.current.y + dy,
       }));
     } else if (e.touches.length >= 2 && touchStartDistRef.current) {
       const currentDist = Math.hypot(
@@ -201,9 +245,24 @@ export function useBoardViewport(
     }
   };
 
-  const handleTouchEnd = () => {
-    setIsPanning(false);
-    touchStartDistRef.current = null;
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (e.touches.length === 0) {
+      if (didPanRef.current) {
+        suppressClickRef.current = true;
+        scheduleClearSuppressClick();
+      }
+      isTouchActiveRef.current = false;
+      didPanRef.current = false;
+      touchStartDistRef.current = null;
+    }
+  };
+
+  const handleClickCapture = (e: React.MouseEvent) => {
+    if (suppressClickRef.current) {
+      e.stopPropagation();
+      e.preventDefault();
+      suppressClickRef.current = false;
+    }
   };
 
   return {
@@ -216,5 +275,6 @@ export function useBoardViewport(
     handleTouchStart,
     handleTouchMove,
     handleTouchEnd,
+    handleClickCapture,
   };
 }
